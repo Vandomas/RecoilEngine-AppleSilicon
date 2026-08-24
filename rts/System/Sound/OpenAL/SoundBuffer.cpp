@@ -19,7 +19,7 @@
 SoundBuffer::bufferMapT SoundBuffer::bufferMap;
 SoundBuffer::bufferVecT SoundBuffer::buffers;
 
-static std::vector<std::uint8_t> decodeBuffer;
+static thread_local std::vector<std::uint8_t> decodeBuffer;
 
 
 #pragma pack(push, 1)

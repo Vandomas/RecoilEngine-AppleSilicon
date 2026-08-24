@@ -40,6 +40,30 @@ void CommonDefHandler::AddSoundSetData(GuiSoundSet& soundSet, const std::string&
 	// NB: for each set, all data variants should be loaded sequentially
 	soundSet.UpdateIndices(soundSetData.size());
 	soundSetData.emplace_back(fileName, -1, volume);
+
+	PreloadSoundFile(fileName);
+}
+
+void CommonDefHandler::PreloadSoundFile(const std::string& fileName)
+{
+	RECOIL_DETAILED_TRACY_ZONE;
+	if (fileName.empty())
+		return;
+
+	const std::string soundExt = FileSystem::GetExtensionLowerCase(fileName);
+
+	const bool foundExt = (std::find(soundExts.cbegin(), soundExts.cend(), soundExt) != soundExts.cend());
+	const bool haveFile = (foundExt && CFileHandler::FileExists(fileName, SPRING_VFS_RAW_FIRST));
+
+	if (haveFile || sound->HasSoundItem(fileName)) {
+		sound->PreloadSoundItem(fileName);
+		return;
+	}
+
+	const std::string soundFile = "sounds/" + fileName + ((soundExt.empty())? ".wav": "");
+
+	if (CFileHandler::FileExists(soundFile, SPRING_VFS_RAW_FIRST))
+		sound->PreloadSoundItem(soundFile);
 }
 
 GuiSoundSetData& CommonDefHandler::GetSoundSetData(size_t idx)
