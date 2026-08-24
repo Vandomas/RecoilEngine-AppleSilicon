@@ -269,6 +269,8 @@ if [ "$PROFILE" = "bar" ]; then
     || { echo "FATAL: consent-dialog.swift failed to compile"; exit 1; }
   swiftc -O -o "$MACOS/message-check" "$PKG/message-check.swift" \
     || { echo "FATAL: message-check.swift failed to compile"; exit 1; }
+  swiftc -O -o "$MACOS/wrapper-bridge" "$PKG/wrapper-bridge.swift" \
+    || { echo "FATAL: wrapper-bridge.swift failed to compile"; exit 1; }
 fi
 # base content archives (engine-built sdz)
 mkdir -p "$RESOURCES/base"
