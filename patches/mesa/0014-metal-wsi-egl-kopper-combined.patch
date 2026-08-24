@@ -1,0 +1,2180 @@
+diff --git a/meson.build b/meson.build
+index e82403014e6..6e1f18dcad9 100644
+--- a/meson.build
++++ b/meson.build
+@@ -362,6 +362,10 @@ if with_gallium and (system_has_kms_drm or (with_gallium_zink and (freedreno_kmd
+     with_dri = true
+   endif
+ endif
++# Enable DRI for macOS with EGL surfaceless (for Zink/Kopper)
++if host_machine.system() == 'darwin' and with_gallium and get_option('egl').enabled()
++  with_dri = true
++endif
+ 
+ with_any_broadcom = [
+   with_gallium_vc4,
+diff --git a/native.ini b/native.ini
+new file mode 100644
+index 00000000000..c41e79dd2b1
+--- /dev/null
++++ b/native.ini
+@@ -0,0 +1,2 @@
++[binaries]
++bison = '/opt/homebrew/opt/bison/bin/bison'
+diff --git a/src/egl/drivers/dri2/egl_dri2.c b/src/egl/drivers/dri2/egl_dri2.c
+index 89c31fb08b9..e4b0c228519 100644
+--- a/src/egl/drivers/dri2/egl_dri2.c
++++ b/src/egl/drivers/dri2/egl_dri2.c
+@@ -42,10 +42,10 @@
+ #include "drm-uapi/drm_fourcc.h"
+ #endif
+ #include <GL/gl.h>
+-#include "mesa_interface.h"
+ #include <sys/stat.h>
+ #include <sys/types.h>
+ #include "dri_screen.h"
++#include "mesa_interface.h"
+ 
+ #ifdef HAVE_WAYLAND_PLATFORM
+ #include "linux-dmabuf-unstable-v1-client-protocol.h"
+@@ -58,14 +58,14 @@
+ 
+ #ifdef HAVE_X11_PLATFORM
+ #include "X11/Xlibint.h"
+-#include "x11_dri3.h"
+ #include "x11_display.h"
++#include "x11_dri3.h"
+ #endif
+ 
+ #include "GL/mesa_glinterop.h"
+-#include "pipe-loader/pipe_loader.h"
+ #include "loader/loader.h"
+ #include "mesa/glapi/glapi/glapi.h"
++#include "pipe-loader/pipe_loader.h"
+ #include "pipe/p_screen.h"
+ #include "util/bitscan.h"
+ #include "util/driconf.h"
+@@ -75,9 +75,9 @@
+ #include "util/u_call_once.h"
+ #include "util/u_math.h"
+ #include "util/u_vector.h"
++#include "dispatch.h"
+ #include "egl_dri2.h"
+ #include "egldefines.h"
+-#include "dispatch.h"
+ 
+ #define NUM_ATTRIBS 16
+ 
+@@ -100,8 +100,8 @@ dri2_gl_flush()
+ }
+ 
+ static void
+-dri2_get_pbuffer_drawable_info(struct dri_drawable *draw, int *x, int *y, int *w,
+-                               int *h, void *loaderPrivate)
++dri2_get_pbuffer_drawable_info(struct dri_drawable *draw, int *x, int *y,
++                               int *w, int *h, void *loaderPrivate)
+ {
+    struct dri2_egl_surface *dri2_surf = loaderPrivate;
+ 
+@@ -111,8 +111,8 @@ dri2_get_pbuffer_drawable_info(struct dri_drawable *draw, int *x, int *y, int *w
+ }
+ 
+ static void
+-dri2_kopper_get_pbuffer_drawable_info(struct dri_drawable *draw,
+-                                      int *w, int *h, void *loaderPrivate)
++dri2_kopper_get_pbuffer_drawable_info(struct dri_drawable *draw, int *w, int *h,
++                                      void *loaderPrivate)
+ {
+    struct dri2_egl_surface *dri2_surf = loaderPrivate;
+ 
+@@ -165,8 +165,8 @@ dri2_put_image(struct dri_drawable *draw, int op, int x, int y, int w, int h,
+ }
+ 
+ static void
+-dri2_get_image(struct dri_drawable *read, int x, int y, int w, int h, char *data,
+-               void *loaderPrivate)
++dri2_get_image(struct dri_drawable *read, int x, int y, int w, int h,
++               char *data, void *loaderPrivate)
+ {
+    struct dri2_egl_surface *dri2_surf = loaderPrivate;
+    const int bpp = dri2_get_bytes_per_pixel(dri2_surf);
+@@ -245,8 +245,7 @@ static EGLBoolean
+ dri2_match_config(const _EGLConfig *conf, const _EGLConfig *criteria)
+ {
+ #ifdef HAVE_X11_PLATFORM
+-   if (conf->Display->Platform == _EGL_PLATFORM_X11 &&
+-       conf->AlphaSize > 0 &&
++   if (conf->Display->Platform == _EGL_PLATFORM_X11 && conf->AlphaSize > 0 &&
+        conf->NativeVisualID != criteria->NativeVisualID)
+       return EGL_FALSE;
+ #endif
+@@ -265,13 +264,13 @@ dri2_get_shifts_and_sizes(const struct dri_config *config, int *shifts,
+                           unsigned int *sizes)
+ {
+    driGetConfigAttrib(config, __DRI_ATTRIB_RED_SHIFT,
+-                         (unsigned int *)&shifts[0]);
++                      (unsigned int *)&shifts[0]);
+    driGetConfigAttrib(config, __DRI_ATTRIB_GREEN_SHIFT,
+-                         (unsigned int *)&shifts[1]);
++                      (unsigned int *)&shifts[1]);
+    driGetConfigAttrib(config, __DRI_ATTRIB_BLUE_SHIFT,
+-                         (unsigned int *)&shifts[2]);
++                      (unsigned int *)&shifts[2]);
+    driGetConfigAttrib(config, __DRI_ATTRIB_ALPHA_SHIFT,
+-                         (unsigned int *)&shifts[3]);
++                      (unsigned int *)&shifts[3]);
+    driGetConfigAttrib(config, __DRI_ATTRIB_RED_SIZE, &sizes[0]);
+    driGetConfigAttrib(config, __DRI_ATTRIB_GREEN_SIZE, &sizes[1]);
+    driGetConfigAttrib(config, __DRI_ATTRIB_BLUE_SIZE, &sizes[2]);
+@@ -282,7 +281,7 @@ enum pipe_format
+ dri2_image_format_for_pbuffer_config(struct dri2_egl_display *dri2_dpy,
+                                      const struct dri_config *config)
+ {
+-   struct gl_config *gl_config = (struct gl_config *) config;
++   struct gl_config *gl_config = (struct gl_config *)config;
+    return gl_config->color_format;
+ }
+ 
+@@ -486,7 +485,7 @@ dri2_add_pbuffer_configs_for_visuals(_EGLDisplay *disp)
+       struct dri2_egl_config *dri2_conf;
+       EGLint config_group = 0;
+       struct gl_config *gl_config =
+-         (struct gl_config *) dri2_dpy->driver_configs[i];
++         (struct gl_config *)dri2_dpy->driver_configs[i];
+       int idx = dri2_pbuffer_visual_index(gl_config->color_format);
+ 
+       if (idx == -1)
+@@ -558,11 +557,17 @@ dri2_detect_swrast_kopper(_EGLDisplay *disp)
+    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
+ 
+    /* Kopper won't work on Android without extra platform level support. */
+-   dri2_dpy->kopper = dri2_dpy->driver_name && !strcmp(dri2_dpy->driver_name, "zink") &&
+-                      !debug_get_bool_option("LIBGL_KOPPER_DISABLE", false) && disp->Platform != _EGL_PLATFORM_ANDROID;
+-   dri2_dpy->swrast = (disp->Options.ForceSoftware && !dri2_dpy->kopper && strcmp(dri2_dpy->driver_name, "vmwgfx")) ||
+-                      !dri2_dpy->driver_name || strstr(dri2_dpy->driver_name, "swrast");
+-   dri2_dpy->swrast_not_kms = dri2_dpy->swrast && (!dri2_dpy->driver_name || strcmp(dri2_dpy->driver_name, "kms_swrast"));
++   dri2_dpy->kopper = dri2_dpy->driver_name &&
++                      !strcmp(dri2_dpy->driver_name, "zink") &&
++                      !debug_get_bool_option("LIBGL_KOPPER_DISABLE", false) &&
++                      disp->Platform != _EGL_PLATFORM_ANDROID;
++   dri2_dpy->swrast = (disp->Options.ForceSoftware && !dri2_dpy->kopper &&
++                       strcmp(dri2_dpy->driver_name, "vmwgfx")) ||
++                      !dri2_dpy->driver_name ||
++                      strstr(dri2_dpy->driver_name, "swrast");
++   dri2_dpy->swrast_not_kms =
++      dri2_dpy->swrast &&
++      (!dri2_dpy->driver_name || strcmp(dri2_dpy->driver_name, "kms_swrast"));
+ }
+ 
+ static const char *
+@@ -586,10 +591,10 @@ dri2_query_driver_config(_EGLDisplay *disp)
+ }
+ 
+ static bool
+-dri2_query_device_info(const void* driver_device_identifier,
++dri2_query_device_info(const void *driver_device_identifier,
+                        struct egl_device_info *device_info)
+ {
+-   const char* drm_device_name = (const char*)driver_device_identifier;
++   const char *drm_device_name = (const char *)driver_device_identifier;
+ 
+    /* We have information cached already. */
+    if (device_info->vendor_name)
+@@ -597,7 +602,8 @@ dri2_query_device_info(const void* driver_device_identifier,
+ 
+    return dri_get_drm_device_info(
+       drm_device_name, device_info->device_uuid, device_info->driver_uuid,
+-      &device_info->vendor_name, &device_info->renderer_name, &device_info->driver_name);
++      &device_info->vendor_name, &device_info->renderer_name,
++      &device_info->driver_name);
+ }
+ 
+ void
+@@ -616,8 +622,9 @@ dri2_setup_screen(_EGLDisplay *disp)
+ #ifdef HAVE_ANDROID_PLATFORM
+    dri2_dpy->has_native_fence_fd = pscreen->caps.native_fence_fd;
+ #endif
+-   dri2_dpy->has_compression_modifiers = pscreen->query_compression_rates &&
+-                                         (pscreen->query_compression_modifiers || dri2_dpy->kopper);
++   dri2_dpy->has_compression_modifiers =
++      pscreen->query_compression_rates &&
++      (pscreen->query_compression_modifiers || dri2_dpy->kopper);
+ 
+    /*
+     * EGL 1.5 specification defines the default value to 1. Moreover,
+@@ -687,11 +694,12 @@ dri2_setup_screen(_EGLDisplay *disp)
+    disp->Extensions.KHR_fence_sync = EGL_TRUE;
+    disp->Extensions.KHR_wait_sync = EGL_TRUE;
+    disp->Extensions.KHR_cl_event2 = EGL_TRUE;
+-   if (dri_fence_get_caps(dri2_dpy->dri_screen_render_gpu)
+-      & __DRI_FENCE_CAP_NATIVE_FD)
++   if (dri_fence_get_caps(dri2_dpy->dri_screen_render_gpu) &
++       __DRI_FENCE_CAP_NATIVE_FD)
+       disp->Extensions.ANDROID_native_fence_sync = EGL_TRUE;
+ 
+-   if (dri_get_pipe_screen(dri2_dpy->dri_screen_render_gpu)->get_disk_shader_cache)
++   if (dri_get_pipe_screen(dri2_dpy->dri_screen_render_gpu)
++          ->get_disk_shader_cache)
+       disp->Extensions.ANDROID_blob_cache = EGL_TRUE;
+ 
+    disp->Extensions.KHR_reusable_sync = EGL_TRUE;
+@@ -720,8 +728,10 @@ dri2_setup_screen(_EGLDisplay *disp)
+    if (dri_get_pipe_screen(dri2_dpy->dri_screen_render_gpu)->set_damage_region)
+       disp->Extensions.KHR_partial_update = EGL_TRUE;
+ 
+-   disp->Extensions.EXT_protected_surface = pscreen->caps.device_protected_surface;
+-   disp->Extensions.EXT_protected_content = pscreen->caps.device_protected_context;
++   disp->Extensions.EXT_protected_surface =
++      pscreen->caps.device_protected_surface;
++   disp->Extensions.EXT_protected_content =
++      pscreen->caps.device_protected_context;
+ }
+ 
+ void
+@@ -731,7 +741,8 @@ dri2_setup_swap_interval(_EGLDisplay *disp, int max_swap_interval)
+    GLint vblank_mode = DRI_CONF_VBLANK_DEF_INTERVAL_1;
+ 
+    /* Allow driconf to override applications.*/
+-   dri2GalliumConfigQueryi(dri2_dpy->dri_screen_render_gpu, "vblank_mode", &vblank_mode);
++   dri2GalliumConfigQueryi(dri2_dpy->dri_screen_render_gpu, "vblank_mode",
++                           &vblank_mode);
+ 
+    switch (vblank_mode) {
+    case DRI_CONF_VBLANK_NEVER:
+@@ -784,8 +795,9 @@ dri2_create_screen(_EGLDisplay *disp)
+           */
+          if (strcmp(dri2_dpy->driver_name, driver_name_display_gpu) == 0) {
+             dri2_dpy->dri_screen_display_gpu = driCreateNewScreen3(
+-               0, dri2_dpy->fd_display_gpu, dri2_dpy->loader_extensions,
+-               type, &dri2_dpy->driver_configs, false, dri2_dpy->multibuffers_available, disp);
++               0, dri2_dpy->fd_display_gpu, dri2_dpy->loader_extensions, type,
++               &dri2_dpy->driver_configs, false,
++               dri2_dpy->multibuffers_available, disp);
+          }
+          free(driver_name_display_gpu);
+       }
+@@ -825,8 +837,8 @@ dri2_setup_device(_EGLDisplay *disp, EGLBoolean software)
+    } else if (loader_is_device_render_capable(dri2_dpy->fd_render_gpu)) {
+       render_fd = dri2_dpy->fd_render_gpu;
+    } else {
+-      render_fd = dri_query_compatible_render_only_device_fd(
+-         dri2_dpy->fd_render_gpu);
++      render_fd =
++         dri_query_compatible_render_only_device_fd(dri2_dpy->fd_render_gpu);
+       if (render_fd < 0)
+          return EGL_FALSE;
+    }
+@@ -1187,7 +1199,8 @@ dri2_create_context(_EGLDisplay *disp, _EGLConfig *conf,
+    struct dri2_egl_context *dri2_ctx;
+    struct dri2_egl_display *dri2_dpy = dri2_egl_display_lock(disp);
+    struct dri2_egl_context *dri2_ctx_shared = dri2_egl_context(share_list);
+-   struct dri_context *shared = dri2_ctx_shared ? dri2_ctx_shared->dri_context : NULL;
++   struct dri_context *shared =
++      dri2_ctx_shared ? dri2_ctx_shared->dri_context : NULL;
+    struct dri2_egl_config *dri2_config = dri2_egl_config(conf);
+    const struct dri_config *dri_config;
+    int api;
+@@ -1383,7 +1396,8 @@ dri2_create_drawable(struct dri2_egl_display *dri2_dpy,
+ {
+    bool is_pixmap = dri2_surf->base.Type == EGL_PBUFFER_BIT ||
+                     dri2_surf->base.Type == EGL_PIXMAP_BIT;
+-   dri2_surf->dri_drawable = dri_create_drawable(dri2_dpy->dri_screen_render_gpu, config, is_pixmap, loaderPrivate);
++   dri2_surf->dri_drawable = dri_create_drawable(
++      dri2_dpy->dri_screen_render_gpu, config, is_pixmap, loaderPrivate);
+    if (dri2_surf->dri_drawable == NULL)
+       return _eglError(EGL_BAD_ALLOC, "createNewDrawable");
+ 
+@@ -1614,21 +1628,21 @@ dri2_flush_drawable_for_swapbuffers_flags(
+       return;
+ 
+    /* We know there's a current context because:
+-      *
+-      *     "If surface is not bound to the calling thread’s current
+-      *      context, an EGL_BAD_SURFACE error is generated."
+-      */
++    *
++    *     "If surface is not bound to the calling thread’s current
++    *      context, an EGL_BAD_SURFACE error is generated."
++    */
+    _EGLContext *ctx = _eglGetCurrentContext();
+    struct dri2_egl_context *dri2_ctx = dri2_egl_context(ctx);
+ 
+    /* From the EGL 1.4 spec (page 52):
+-      *
+-      *     "The contents of ancillary buffers are always undefined
+-      *      after calling eglSwapBuffers."
+-      */
++    *
++    *     "The contents of ancillary buffers are always undefined
++    *      after calling eglSwapBuffers."
++    */
+    dri_flush(dri2_ctx->dri_context, dri_drawable,
+-      __DRI2_FLUSH_DRAWABLE | __DRI2_FLUSH_INVALIDATE_ANCILLARY,
+-      throttle_reason);
++             __DRI2_FLUSH_DRAWABLE | __DRI2_FLUSH_INVALIDATE_ANCILLARY,
++             throttle_reason);
+ }
+ 
+ void
+@@ -1888,8 +1902,8 @@ dri2_create_image_khr_renderbuffer(_EGLDisplay *disp, _EGLContext *ctx,
+    }
+ 
+    unsigned error = ~0;
+-   dri_image = dri_create_image_from_renderbuffer(
+-      dri2_ctx->dri_context, renderbuffer, NULL, &error);
++   dri_image = dri_create_image_from_renderbuffer(dri2_ctx->dri_context,
++                                                  renderbuffer, NULL, &error);
+ 
+    assert(!!dri_image == (error == __DRI_IMAGE_ERROR_SUCCESS));
+ 
+@@ -2038,9 +2052,9 @@ dri2_create_image_khr_texture(_EGLDisplay *disp, _EGLContext *ctx,
+ 
+    _eglInitImage(&dri2_img->base, disp);
+ 
+-   dri2_img->dri_image = dri2_create_from_texture(
+-      dri2_ctx->dri_context, gl_target, texture, depth, attrs.GLTextureLevel,
+-      &error, NULL);
++   dri2_img->dri_image =
++      dri2_create_from_texture(dri2_ctx->dri_context, gl_target, texture, depth,
++                               attrs.GLTextureLevel, &error, NULL);
+    dri2_create_image_khr_texture_error(error);
+ 
+    if (!dri2_img->dri_image) {
+@@ -2344,8 +2358,8 @@ dri2_query_dma_buf_formats(_EGLDisplay *disp, EGLint max, EGLint *formats,
+    if (!dri2_dpy->has_dmabuf_import)
+       goto fail;
+ 
+-   if (!dri_query_dma_buf_formats(dri2_dpy->dri_screen_render_gpu,
+-                                            max, formats, count))
++   if (!dri_query_dma_buf_formats(dri2_dpy->dri_screen_render_gpu, max, formats,
++                                  count))
+       goto fail;
+ 
+    if (max > 0) {
+@@ -2393,9 +2407,9 @@ dri2_query_dma_buf_modifiers(_EGLDisplay *disp, EGLint format, EGLint max,
+       return EGL_FALSE;
+    }
+ 
+-   if (dri_query_dma_buf_modifiers(
+-          dri2_dpy->dri_screen_render_gpu, format, max, modifiers,
+-          (unsigned int *)external_only, count) == false)
++   if (dri_query_dma_buf_modifiers(dri2_dpy->dri_screen_render_gpu, format, max,
++                                   modifiers, (unsigned int *)external_only,
++                                   count) == false)
+       return dri2_egl_error_unlock(dri2_dpy, EGL_BAD_PARAMETER,
+                                    "invalid format");
+ 
+@@ -2476,8 +2490,7 @@ dri2_create_image_dma_buf(_EGLDisplay *disp, _EGLContext *ctx,
+       attrs.DMABufFourCC.Value, modifier, fds, num_fds, pitches, offsets,
+       attrs.DMABufYuvColorSpaceHint.Value, attrs.DMABufSampleRangeHint.Value,
+       attrs.DMABufChromaHorizontalSiting.Value,
+-      attrs.DMABufChromaVerticalSiting.Value,
+-      flags, &error, NULL);
++      attrs.DMABufChromaVerticalSiting.Value, flags, &error, NULL);
+ 
+    egl_error = egl_error_from_dri_image_error(error);
+    if (egl_error != EGL_SUCCESS)
+@@ -2504,8 +2517,8 @@ dri2_can_export_dma_buf_image(_EGLDisplay *disp, _EGLImage *img)
+    struct dri2_egl_image *dri2_img = dri2_egl_image(img);
+    EGLint fourcc;
+ 
+-   if (!dri2_query_image(dri2_img->dri_image,
+-                                    __DRI_IMAGE_ATTRIB_FOURCC, &fourcc)) {
++   if (!dri2_query_image(dri2_img->dri_image, __DRI_IMAGE_ATTRIB_FOURCC,
++                         &fourcc)) {
+       return false;
+    }
+ 
+@@ -2526,24 +2539,23 @@ dri2_export_dma_buf_image_query_mesa(_EGLDisplay *disp, _EGLImage *img,
+       return EGL_FALSE;
+    }
+ 
+-   dri2_query_image(dri2_img->dri_image,
+-                               __DRI_IMAGE_ATTRIB_NUM_PLANES, &num_planes);
++   dri2_query_image(dri2_img->dri_image, __DRI_IMAGE_ATTRIB_NUM_PLANES,
++                    &num_planes);
+    if (nplanes)
+       *nplanes = num_planes;
+ 
+    if (fourcc)
+-      dri2_query_image(dri2_img->dri_image,
+-                                  __DRI_IMAGE_ATTRIB_FOURCC, fourcc);
++      dri2_query_image(dri2_img->dri_image, __DRI_IMAGE_ATTRIB_FOURCC, fourcc);
+ 
+    if (modifiers) {
+       int mod_hi, mod_lo;
+       uint64_t modifier = DRM_FORMAT_MOD_INVALID;
+       bool query;
+ 
+-      query = dri2_query_image(
+-         dri2_img->dri_image, __DRI_IMAGE_ATTRIB_MODIFIER_UPPER, &mod_hi);
+-      query &= dri2_query_image(
+-         dri2_img->dri_image, __DRI_IMAGE_ATTRIB_MODIFIER_LOWER, &mod_lo);
++      query = dri2_query_image(dri2_img->dri_image,
++                               __DRI_IMAGE_ATTRIB_MODIFIER_UPPER, &mod_hi);
++      query &= dri2_query_image(dri2_img->dri_image,
++                                __DRI_IMAGE_ATTRIB_MODIFIER_LOWER, &mod_lo);
+       if (query)
+          modifier = combine_u32_into_u64(mod_hi, mod_lo);
+ 
+@@ -2570,7 +2582,8 @@ dri2_export_dma_buf_image_mesa(_EGLDisplay *disp, _EGLImage *img, int *fds,
+ 
+    int nplanes;
+    /* Query nplanes so that we know how big the given array is. */
+-   dri2_query_image(dri2_img->dri_image, __DRI_IMAGE_ATTRIB_NUM_PLANES, &nplanes);
++   dri2_query_image(dri2_img->dri_image, __DRI_IMAGE_ATTRIB_NUM_PLANES,
++                    &nplanes);
+ 
+    /* For driver which does not implement disjoint query, still uses
+     * single fd to match previous behavior.
+@@ -2597,10 +2610,12 @@ dri2_export_dma_buf_image_mesa(_EGLDisplay *disp, _EGLImage *img, int *fds,
+             fds[i] = -1;
+       }
+ 
+-      if (strides && !dri2_query_image(image, __DRI_IMAGE_ATTRIB_STRIDE, &strides[i]))
++      if (strides &&
++          !dri2_query_image(image, __DRI_IMAGE_ATTRIB_STRIDE, &strides[i]))
+          strides[i] = 0;
+ 
+-      if (offsets && !dri2_query_image(image, __DRI_IMAGE_ATTRIB_OFFSET, &offsets[i]))
++      if (offsets &&
++          !dri2_query_image(image, __DRI_IMAGE_ATTRIB_OFFSET, &offsets[i]))
+          offsets[i] = 0;
+ 
+       if (i)
+@@ -2792,8 +2807,7 @@ dri2_egl_unref_sync(struct dri2_egl_display *dri2_dpy,
+       }
+ 
+       if (dri2_sync->fence)
+-         dri_destroy_fence(dri2_dpy->dri_screen_render_gpu,
+-                                        dri2_sync->fence);
++         dri_destroy_fence(dri2_dpy->dri_screen_render_gpu, dri2_sync->fence);
+ 
+       free(dri2_sync);
+    }
+@@ -2841,8 +2855,7 @@ dri2_create_sync(_EGLDisplay *disp, EGLenum type, const EGLAttrib *attrib_list)
+       }
+ 
+       /* the initial status must be "signaled" if the cl_event is signaled */
+-      if (dri_client_wait_sync(dri2_ctx->dri_context,
+-                                            dri2_sync->fence, 0, 0))
++      if (dri_client_wait_sync(dri2_ctx->dri_context, dri2_sync->fence, 0, 0))
+          dri2_sync->base.SyncStatus = EGL_SIGNALED_KHR;
+       break;
+ 
+@@ -2877,8 +2890,8 @@ dri2_create_sync(_EGLDisplay *disp, EGLenum type, const EGLAttrib *attrib_list)
+       break;
+ 
+    case EGL_SYNC_NATIVE_FENCE_ANDROID:
+-      dri2_sync->fence = dri_create_fence_fd(
+-            dri2_ctx->dri_context, dri2_sync->base.SyncFd);
++      dri2_sync->fence =
++         dri_create_fence_fd(dri2_ctx->dri_context, dri2_sync->base.SyncFd);
+       if (!dri2_sync->fence) {
+          _eglError(EGL_BAD_ATTRIBUTE, "eglCreateSyncKHR");
+          goto fail;
+@@ -2940,8 +2953,8 @@ dri2_dup_native_fence_fd(_EGLDisplay *disp, _EGLSync *sync)
+       /* try to retrieve the actual native fence fd.. if rendering is
+        * not flushed this will just return -1, aka NO_NATIVE_FENCE_FD:
+        */
+-      sync->SyncFd = dri_get_fence_fd(
+-         dri2_dpy->dri_screen_render_gpu, dri2_sync->fence);
++      sync->SyncFd =
++         dri_get_fence_fd(dri2_dpy->dri_screen_render_gpu, dri2_sync->fence);
+    }
+ 
+    mtx_unlock(&dri2_dpy->lock);
+@@ -2993,9 +3006,8 @@ dri2_client_wait_sync(_EGLDisplay *disp, _EGLSync *sync, EGLint flags,
+    case EGL_SYNC_FENCE_KHR:
+    case EGL_SYNC_NATIVE_FENCE_ANDROID:
+    case EGL_SYNC_CL_EVENT_KHR:
+-      if (dri_client_wait_sync(
+-             dri2_ctx ? dri2_ctx->dri_context : NULL, dri2_sync->fence,
+-             wait_flags, timeout))
++      if (dri_client_wait_sync(dri2_ctx ? dri2_ctx->dri_context : NULL,
++                               dri2_sync->fence, wait_flags, timeout))
+          dri2_sync->base.SyncStatus = EGL_SIGNALED_KHR;
+       else
+          ret = EGL_TIMEOUT_EXPIRED_KHR;
+@@ -3091,8 +3103,7 @@ dri2_server_wait_sync(_EGLDisplay *disp, _EGLSync *sync)
+    struct dri2_egl_context *dri2_ctx = dri2_egl_context(ctx);
+    struct dri2_egl_sync *dri2_sync = dri2_egl_sync(sync);
+ 
+-   dri_server_wait_sync(dri2_ctx->dri_context, dri2_sync->fence,
+-                                     0);
++   dri_server_wait_sync(dri2_ctx->dri_context, dri2_sync->fence, 0);
+    return EGL_TRUE;
+ }
+ 
+@@ -3122,8 +3133,7 @@ dri2_interop_flush_objects(_EGLDisplay *disp, _EGLContext *ctx, unsigned count,
+ {
+    struct dri2_egl_context *dri2_ctx = dri2_egl_context(ctx);
+ 
+-   return dri_interop_flush_objects(dri2_ctx->dri_context, count,
+-                                           objects, out);
++   return dri_interop_flush_objects(dri2_ctx->dri_context, count, objects, out);
+ }
+ 
+ static EGLBoolean
+@@ -3139,9 +3149,9 @@ dri2_query_supported_compression_rates(_EGLDisplay *disp, _EGLConfig *config,
+    if (dri2_dpy->has_compression_modifiers) {
+       const struct dri_config *dri_conf =
+          dri2_get_dri_config(conf, EGL_WINDOW_BIT, EGL_GL_COLORSPACE_LINEAR);
+-      if (!dri2_query_compression_rates(
+-             dri2_dpy->dri_screen_render_gpu, dri_conf, rate_size, dri_rates,
+-             num_rate))
++      if (!dri2_query_compression_rates(dri2_dpy->dri_screen_render_gpu,
++                                        dri_conf, rate_size, dri_rates,
++                                        num_rate))
+          return EGL_FALSE;
+ 
+       for (int i = 0; i < *num_rate && i < rate_size; ++i)
+diff --git a/src/egl/drivers/dri2/platform_surfaceless.c b/src/egl/drivers/dri2/platform_surfaceless.c
+index 8fbb9a60ed4..1f3a196fd57 100644
+--- a/src/egl/drivers/dri2/platform_surfaceless.c
++++ b/src/egl/drivers/dri2/platform_surfaceless.c
+@@ -34,21 +34,52 @@
+ #include <sys/stat.h>
+ #include <sys/types.h>
+ 
++#include "dri_screen.h"
++#include "dri_util.h"
+ #include "egl_dri2.h"
+ #include "eglglobals.h"
+ #include "kopper_interface.h"
+ #include "loader.h"
+ #include "loader_dri_helper.h"
+-#include "dri_util.h"
+-#include "dri_screen.h"
++
++#if defined(__APPLE__) && defined(VK_USE_PLATFORM_METAL_EXT)
++#include <execinfo.h>
++#include <pthread.h>
++#include <signal.h>
++#include <dispatch/dispatch.h>
++#include <objc/message.h>
++#include <objc/runtime.h>
++#include <vulkan/vulkan_metal.h>
++
++static void
++crash_handler(int sig)
++{
++   void *array[50];
++   int size = backtrace(array, 50);
++   fprintf(stderr, "\n\n=== CRASH HANDLER: Signal %d ===\n", sig);
++   fprintf(stderr, "Stack trace:\n");
++   backtrace_symbols_fd(array, size, STDERR_FILENO);
++   fprintf(stderr, "=== END STACK TRACE ===\n\n");
++   signal(sig, SIG_DFL);
++   raise(sig);
++}
++
++__attribute__((constructor)) static void
++install_crash_handler(void)
++{
++   signal(SIGSEGV, crash_handler);
++   signal(SIGBUS, crash_handler);
++   signal(SIGABRT, crash_handler);
++}
++#endif
+ 
+ static struct dri_image *
+ surfaceless_alloc_image(struct dri2_egl_display *dri2_dpy,
+                         struct dri2_egl_surface *dri2_surf)
+ {
+-   return dri_create_image(
+-      dri2_dpy->dri_screen_render_gpu, dri2_surf->base.Width,
+-      dri2_surf->base.Height, dri2_surf->visual, NULL, 0, 0, NULL);
++   return dri_create_image(dri2_dpy->dri_screen_render_gpu,
++                           dri2_surf->base.Width, dri2_surf->base.Height,
++                           dri2_surf->visual, NULL, 0, 0, NULL);
+ }
+ 
+ static void
+@@ -64,9 +95,9 @@ surfaceless_free_images(struct dri2_egl_surface *dri2_surf)
+ }
+ 
+ static int
+-surfaceless_image_get_buffers(struct dri_drawable *driDrawable, unsigned int format,
+-                              uint32_t *stamp, void *loaderPrivate,
+-                              uint32_t buffer_mask,
++surfaceless_image_get_buffers(struct dri_drawable *driDrawable,
++                              unsigned int format, uint32_t *stamp,
++                              void *loaderPrivate, uint32_t buffer_mask,
+                               struct __DRIimageList *buffers)
+ {
+    struct dri2_egl_surface *dri2_surf = loaderPrivate;
+@@ -180,8 +211,91 @@ static const struct dri2_egl_display_vtbl dri2_surfaceless_display_vtbl = {
+    .get_dri_drawable = dri2_surface_get_dri_drawable,
+ };
+ 
++#ifdef __APPLE__
++/* macOS window surface functions for Kopper/Metal */
++
++static _EGLSurface *
++dri2_surfaceless_create_window_surface(_EGLDisplay *disp, _EGLConfig *conf,
++                                       void *native_window,
++                                       const EGLint *attrib_list)
++{
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++   struct dri2_egl_config *dri2_conf = dri2_egl_config(conf);
++   struct dri2_egl_surface *dri2_surf;
++   const struct dri_config *config;
++
++   dri2_surf = calloc(1, sizeof *dri2_surf);
++   if (!dri2_surf) {
++      _eglError(EGL_BAD_ALLOC, "eglCreateWindowSurface");
++      return NULL;
++   }
++
++   if (!dri2_init_surface(&dri2_surf->base, disp, EGL_WINDOW_BIT, conf,
++                          attrib_list, false, native_window))
++      goto cleanup_surface;
++
++   config = dri2_get_dri_config(dri2_conf, EGL_WINDOW_BIT,
++                                dri2_surf->base.GLColorspace);
++   if (!config) {
++      _eglError(EGL_BAD_MATCH,
++                "Unsupported surfacetype/colorspace configuration");
++      goto cleanup_surface;
++   }
++
++   dri2_surf->visual = dri2_image_format_for_pbuffer_config(dri2_dpy, config);
++   if (dri2_surf->visual == PIPE_FORMAT_NONE)
++      goto cleanup_surface;
++
++   if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf))
++      goto cleanup_surface;
++
++   return &dri2_surf->base;
++
++cleanup_surface:
++   free(dri2_surf);
++   return NULL;
++}
++
++static EGLBoolean
++dri2_surfaceless_kopper_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(draw);
++   kopperSwapBuffers(dri2_surf->dri_drawable,
++                     __DRI2_FLUSH_CONTEXT | __DRI2_FLUSH_INVALIDATE_ANCILLARY);
++   return EGL_TRUE;
++}
++
++static EGLBoolean
++dri2_surfaceless_kopper_swap_interval(_EGLDisplay *disp, _EGLSurface *surf,
++                                      EGLint interval)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
++   kopperSetSwapInterval(dri2_surf->dri_drawable, interval);
++   return EGL_TRUE;
++}
++
++static EGLint
++dri2_surfaceless_kopper_query_buffer_age(_EGLDisplay *disp, _EGLSurface *surf)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
++   return kopperQueryBufferAge(dri2_surf->dri_drawable);
++}
++
++static const struct dri2_egl_display_vtbl dri2_surfaceless_metal_display_vtbl = {
++   .create_window_surface = dri2_surfaceless_create_window_surface,
++   .create_pbuffer_surface = dri2_surfaceless_create_pbuffer_surface,
++   .destroy_surface = surfaceless_destroy_surface,
++   .create_image = dri2_create_image_khr,
++   .swap_buffers = dri2_surfaceless_kopper_swap_buffers,
++   .swap_interval = dri2_surfaceless_kopper_swap_interval,
++   .query_buffer_age = dri2_surfaceless_kopper_query_buffer_age,
++   .get_dri_drawable = dri2_surface_get_dri_drawable,
++};
++#endif /* __APPLE__ */
++
+ static void
+-surfaceless_flush_front_buffer(struct dri_drawable *driDrawable, void *loaderPrivate)
++surfaceless_flush_front_buffer(struct dri_drawable *driDrawable,
++                               void *loaderPrivate)
+ {
+ }
+ 
+@@ -207,19 +321,275 @@ static const __DRIimageLoaderExtension image_loader_extension = {
+ };
+ 
+ static const __DRIextension *image_loader_extensions[] = {
+-   &image_loader_extension.base,  &image_lookup_extension.base, NULL,
++   &image_loader_extension.base,
++   &image_lookup_extension.base,
++   NULL,
+ };
+ 
+ static const __DRIextension *swrast_loader_extensions[] = {
+-   &swrast_pbuffer_loader_extension.base, &image_loader_extension.base,
+-   &image_lookup_extension.base, NULL,
++   &swrast_pbuffer_loader_extension.base,
++   &image_loader_extension.base,
++   &image_lookup_extension.base,
++   NULL,
+ };
+ 
+ static const __DRIextension *kopper_loader_extensions[] = {
+-   &kopper_pbuffer_loader_extension.base, &image_lookup_extension.base,
+-   &image_lookup_extension.base, NULL,
++   &kopper_pbuffer_loader_extension.base,
++   &image_lookup_extension.base,
++   &image_lookup_extension.base,
++   NULL,
++};
++
++#ifdef __APPLE__
++/* macOS Metal window surface support for Kopper */
++
++#ifdef VK_USE_PLATFORM_METAL_EXT
++
++struct get_size_ctx {
++   void *layer;
++   double w;
++   double h;
++};
++
++static void
++get_drawable_size_main_thread(void *data)
++{
++   struct get_size_ctx *ctx = data;
++   typedef struct {
++      double width;
++      double height;
++   } MGLSize;
++
++   /* Check superlayer to verify attachment */
++   id superlayer = ((id(*)(id, SEL))objc_msgSend)(
++      (id)ctx->layer, sel_registerName("superlayer"));
++
++   MGLSize (*msgSendSize)(id, SEL) = (MGLSize(*)(id, SEL))objc_msgSend;
++   MGLSize size = msgSendSize((id)ctx->layer, sel_registerName("drawableSize"));
++   ctx->w = size.width;
++   ctx->h = size.height;
++}
++
++static void
++surfaceless_metal_kopper_get_drawable_info(struct dri_drawable *draw, int *w,
++                                           int *h, void *loaderPrivate)
++{
++   struct dri2_egl_surface *dri2_surf = loaderPrivate;
++   void *layer = dri2_surf->base.NativeSurface;
++
++   if (layer) {
++      /* Debugging SIGBUS: Validate layer state */
++
++      /* Check class */
++      const char *cls = object_getClassName((id)layer);
++
++      /* Check device property */
++      id device =
++         ((id(*)(id, SEL))objc_msgSend)((id)layer, sel_registerName("device"));
++
++      /* [layer drawableSize] */
++      /* Query on Main Thread to avoid race conditions with CoreAnimation which
++       * can cause SIGBUS */
++
++      struct get_size_ctx ctx;
++      ctx.layer = layer;
++      ctx.w = 0;
++      ctx.h = 0;
++
++      if (pthread_main_np()) {
++         get_drawable_size_main_thread(&ctx);
++      } else {
++         dispatch_sync_f(dispatch_get_main_queue(), &ctx,
++                         get_drawable_size_main_thread);
++      }
++
++      *w = (int)ctx.w;
++      *h = (int)ctx.h;
++   } else {
++      *w = dri2_surf->base.Width;
++      *h = dri2_surf->base.Height;
++   }
++}
++
++#include <objc/message.h>
++#include <objc/runtime.h>
++
++struct swap_layer_ctx {
++   void *layer;
++   void *result_layer;
++};
++
++static void
++swap_layer_on_main_thread(void *data)
++{
++   struct swap_layer_ctx *ctx = data;
++   void *lblayer = ctx->layer;
++   if (!lblayer)
++      return;
++
++   const char *className = object_getClassName((id)lblayer);
++
++   if (strcmp(className, "NSViewBackingLayer") == 0 ||
++       strcmp(className, "_NSViewBackingLayer") == 0) {
++      /* Get the view from the layer's delegate */
++      id view = ((id(*)(id, SEL))objc_msgSend)((id)lblayer,
++                                               sel_registerName("delegate"));
++
++      if (view) {
++         /* [view setWantsLayer:YES] */
++         ((void (*)(id, SEL, BOOL))objc_msgSend)(
++            view, sel_registerName("setWantsLayer:"), 1);
++
++         /* id newLayer = [CAMetalLayer layer] */
++         Class CAMetalLayerClass = objc_getClass("CAMetalLayer");
++         if (CAMetalLayerClass) {
++            id newLayer = ((id(*)(id, SEL))objc_msgSend)(
++               (id)CAMetalLayerClass, sel_registerName("layer"));
++
++            if (newLayer) {
++               /* Configure the layer to match the view's dimensions and
++                * scale */
++               /* CGRect bounds = [view bounds] */
++               typedef struct {
++                  double x, y, w, h;
++               } MGLRect;
++               MGLRect (*msgSendRect)(id, SEL) =
++                  (MGLRect(*)(id, SEL))objc_msgSend;
++               MGLRect viewBounds =
++                  msgSendRect(view, sel_registerName("bounds"));
++
++               /* [newLayer setFrame:viewBounds] */
++               void (*msgSendRect_v)(id, SEL, MGLRect) =
++                  (void (*)(id, SEL, MGLRect))objc_msgSend;
++               msgSendRect_v(newLayer, sel_registerName("setFrame:"),
++                             viewBounds);
++
++               /* [newLayer setOpaque:YES] - prevents alpha blending
++                * with desktop */
++               void (*msgSendBool_v)(id, SEL, BOOL) =
++                  (void (*)(id, SEL, BOOL))objc_msgSend;
++               msgSendBool_v(newLayer, sel_registerName("setOpaque:"), YES);
++
++               /* Get window's backingScaleFactor for Retina display
++                * support */
++               /* id window = [view window] */
++               id window = ((id(*)(id, SEL))objc_msgSend)(
++                  view, sel_registerName("window"));
++               double scale = 1.0;
++               if (window) {
++                  /* CGFloat scale = [window backingScaleFactor] */
++                  double (*msgSendDouble)(id, SEL) =
++                     (double (*)(id, SEL))objc_msgSend;
++                  scale = msgSendDouble(window,
++                                        sel_registerName("backingScaleFactor"));
++
++                  /* [newLayer setContentsScale:scale] */
++                  void (*msgSendDouble_v)(id, SEL, double) =
++                     (void (*)(id, SEL, double))objc_msgSend;
++                  msgSendDouble_v(newLayer,
++                                  sel_registerName("setContentsScale:"), scale);
++               }
++
++               /* Explicitly set drawableSize to match the backing store
++                * size. CAMetalLayer.drawableSize = view.bounds.size *
++                * contentsScale If we don't set this, drawableSize might
++                * return 1x1 until the next layout pass.
++                */
++               typedef struct {
++                  double w, h;
++               } MGLSize;
++               MGLSize drawableSize;
++               drawableSize.w = viewBounds.w * scale;
++               drawableSize.h = viewBounds.h * scale;
++               void (*msgSendSize_v)(id, SEL, MGLSize) =
++                  (void (*)(id, SEL, MGLSize))objc_msgSend;
++               msgSendSize_v(newLayer, sel_registerName("setDrawableSize:"),
++                             drawableSize);
++
++               /* [view setLayer:newLayer] */
++               ((void (*)(id, SEL, id))objc_msgSend)(
++                  view, sel_registerName("setLayer:"), newLayer);
++
++               /* Explicitly RETAIN the layer to ensure it survives.
++                * platform_surfaceless doesn't normally own the window,
++                * but here we created the layer. We need to ensure
++                * dri2_surf->base.NativeSurface remains valid.
++                */
++               ((id(*)(id, SEL))objc_msgSend)(newLayer,
++                                              sel_registerName("retain"));
++
++               ctx->result_layer = newLayer; /* Pass back the new layer */
++            } else {
++            }
++         } else {
++         }
++      }
++   }
++}
++
++static void
++surfaceless_metal_kopper_set_surface_create_info(void *_draw,
++                                                 struct kopper_loader_info *ci)
++{
++   struct dri2_egl_surface *dri2_surf = _draw;
++   VkMetalSurfaceCreateInfoEXT *metal = (VkMetalSurfaceCreateInfoEXT *)&ci->bos;
++
++   if (dri2_surf->base.Type != EGL_WINDOW_BIT)
++      return;
++
++   metal->sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
++   metal->pNext = NULL;
++   metal->flags = 0;
++
++   void *layer = dri2_surf->base.NativeSurface;
++
++   /* Fix for KosmicKrisp/wsi_metal_surface crash:
++    * If we receive an NSViewBackingLayer (generic default layer), we need to
++    * force the view to use a CAMetalLayer instead.
++    * This MUST be done on the Main Thread to avoid SIGBUS/race conditions.
++    */
++   if (layer) {
++      struct swap_layer_ctx ctx;
++      ctx.layer = layer;
++      ctx.result_layer = layer;
++
++      /* Avoid deadlock if we are already on the main thread */
++      if (pthread_main_np()) {
++         swap_layer_on_main_thread(&ctx);
++      } else {
++         dispatch_sync_f(dispatch_get_main_queue(), &ctx,
++                         swap_layer_on_main_thread);
++      }
++
++      if (layer != ctx.result_layer) {
++         layer = ctx.result_layer;
++         dri2_surf->base.NativeSurface =
++            layer; /* Update state for git_drawable_info */
++      }
++   }
++
++   /* The native window is the CAMetalLayer pointer */
++   metal->pLayer = layer;
++   ci->has_alpha = true; /* Assume alpha support */
++   /* Force opaque presentation on Metal - don't blend with desktop */
++   ci->present_opaque = true;
++}
++
++static const __DRIkopperLoaderExtension kopper_metal_loader_extension = {
++   .base = {__DRI_KOPPER_LOADER, 1},
++
++   .SetSurfaceCreateInfo = surfaceless_metal_kopper_set_surface_create_info,
++   .GetDrawableInfo = surfaceless_metal_kopper_get_drawable_info,
+ };
+ 
++static const __DRIextension *kopper_metal_loader_extensions[] = {
++   &kopper_metal_loader_extension.base,
++   &image_lookup_extension.base,
++   NULL,
++};
++#endif /* VK_USE_PLATFORM_METAL_EXT */
++#endif /* __APPLE__ */
++
+ static bool
+ surfaceless_probe_device(_EGLDisplay *disp, bool swrast, bool zink)
+ {
+@@ -255,8 +625,9 @@ surfaceless_probe_device(_EGLDisplay *disp, bool swrast, bool zink)
+          dri2_dpy->device_name =
+             loader_get_device_name_for_fd(dri2_dpy->fd_render_gpu);
+          if (!dri2_dpy->device_name) {
+-            _eglError(EGL_BAD_ALLOC, "surfaceless-egl: failed to get device name "
+-                                     "for requested GPU");
++            _eglError(EGL_BAD_ALLOC,
++                      "surfaceless-egl: failed to get device name "
++                      "for requested GPU");
+             goto retry;
+          }
+       }
+@@ -302,9 +673,12 @@ surfaceless_probe_device(_EGLDisplay *disp, bool swrast, bool zink)
+ 
+          if (!dri2_dpy->dri_screen_render_gpu->base.screen->caps.graphics) {
+ 
+-            _eglLog(_EGL_DEBUG, "DRI2: Driver %s doesn't support graphics, skipping.", dri2_dpy->driver_name);
++            _eglLog(_EGL_DEBUG,
++                    "DRI2: Driver %s doesn't support graphics, skipping.",
++                    dri2_dpy->driver_name);
+ 
+-            if (dri2_dpy->dri_screen_display_gpu != dri2_dpy->dri_screen_render_gpu) {
++            if (dri2_dpy->dri_screen_display_gpu !=
++                dri2_dpy->dri_screen_render_gpu) {
+                driDestroyScreen(dri2_dpy->dri_screen_display_gpu);
+                dri2_dpy->dri_screen_display_gpu = NULL;
+             }
+@@ -360,9 +734,13 @@ surfaceless_probe_device_sw(_EGLDisplay *disp)
+ 
+    dri2_detect_swrast_kopper(disp);
+ 
+-   if (dri2_dpy->kopper)
++   if (dri2_dpy->kopper) {
++#if defined(__APPLE__) && defined(VK_USE_PLATFORM_METAL_EXT)
++      dri2_dpy->loader_extensions = kopper_metal_loader_extensions;
++#else
+       dri2_dpy->loader_extensions = kopper_loader_extensions;
+-   else
++#endif
++   } else
+       dri2_dpy->loader_extensions = swrast_loader_extensions;
+ 
+    dri2_dpy->fd_display_gpu = dri2_dpy->fd_render_gpu;
+@@ -389,7 +767,16 @@ dri2_initialize_surfaceless(_EGLDisplay *disp)
+     */
+    driver_loaded = surfaceless_probe_device(disp, disp->Options.ForceSoftware,
+                                             disp->Options.Zink);
+-   if (!driver_loaded && disp->Options.ForceSoftware) {
++   /* On macOS (Darwin) or when ForceSoftware is set, fall back to swrast/zink
++    * if no DRM devices were found.
++    */
++   if (!driver_loaded &&
++       (disp->Options.ForceSoftware
++#ifdef __APPLE__
++        ||
++        true /* Always try fallback on macOS since there are no DRM devices */
++#endif
++        )) {
+       _eglLog(_EGL_DEBUG, "Falling back to surfaceless swrast without DRM.");
+       driver_loaded = surfaceless_probe_device_sw(disp);
+    }
+@@ -408,10 +795,27 @@ dri2_initialize_surfaceless(_EGLDisplay *disp)
+ 
+    dri2_add_pbuffer_configs_for_visuals(disp);
+ 
++#ifdef __APPLE__
++   /* On macOS, also add window configs when kopper is enabled so that
++    * window surfaces can be created via the kopper/Metal presentation path.
++    */
++   if (dri2_dpy->kopper) {
++      for (unsigned i = 0; dri2_dpy->driver_configs[i] != NULL; i++) {
++         dri2_add_config(disp, dri2_dpy->driver_configs[i],
++                         EGL_WINDOW_BIT | EGL_PBUFFER_BIT, NULL);
++      }
++   }
++#endif
++
+    /* Fill vtbl last to prevent accidentally calling virtual function during
+     * initialization.
+     */
+-   dri2_dpy->vtbl = &dri2_surfaceless_display_vtbl;
++#if defined(__APPLE__) && defined(VK_USE_PLATFORM_METAL_EXT)
++   if (dri2_dpy->kopper)
++      dri2_dpy->vtbl = &dri2_surfaceless_metal_display_vtbl;
++   else
++#endif
++      dri2_dpy->vtbl = &dri2_surfaceless_display_vtbl;
+ 
+    return EGL_TRUE;
+ 
+diff --git a/src/egl/main/eglapi.c b/src/egl/main/eglapi.c
+index fb5a8b6f7c1..be043547cab 100644
+--- a/src/egl/main/eglapi.c
++++ b/src/egl/main/eglapi.c
+@@ -651,7 +651,7 @@ _eglComputeVersion(_EGLDisplay *disp)
+        disp->Extensions.KHR_surfaceless_context)
+       disp->Version = 15;
+ 
+-      /* For Android P and below limit the EGL version to 1.4 */
++   /* For Android P and below limit the EGL version to 1.4 */
+ #if DETECT_OS_ANDROID && ANDROID_API_LEVEL <= 28
+    disp->Version = 14;
+ #endif
+@@ -979,8 +979,7 @@ eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx)
+        !draw_surf->ProtectedContent)
+       RETURN_EGL_ERROR(disp, EGL_BAD_ACCESS, EGL_FALSE);
+ 
+-   egl_relax (disp,
+-              draw_surf ? &draw_surf->Resource : NULL,
++   egl_relax (disp, draw_surf ? &draw_surf->Resource : NULL,
+               read_surf ? &read_surf->Resource : NULL,
+               context ? &context->Resource : NULL) {
+       ret = disp->Driver->MakeCurrent(disp, draw_surf, read_surf, context);
+@@ -1045,19 +1044,30 @@ _eglCreateWindowSurfaceCommon(_EGLDisplay *disp, EGLConfig config,
+ 
+    if (disp && (disp->Platform == _EGL_PLATFORM_SURFACELESS ||
+                 disp->Platform == _EGL_PLATFORM_DEVICE)) {
+-      /* From the EGL_MESA_platform_surfaceless spec (v1):
+-       *
+-       *    eglCreatePlatformWindowSurface fails when called with a <display>
+-       *    that belongs to the surfaceless platform. It returns
+-       *    EGL_NO_SURFACE and generates EGL_BAD_NATIVE_WINDOW. The
+-       *    justification for this unconditional failure is that the
+-       *    surfaceless platform has no native windows, and therefore the
+-       *    <native_window> parameter is always invalid.
+-       *
+-       * This check must occur before checking the EGLConfig, which emits
+-       * EGL_BAD_CONFIG.
++#ifdef __APPLE__
++      /* On macOS, allow window surfaces on surfaceless platform when using
++       * kopper. The kopper interface handles Metal swapchain presentation
++       * for window surfaces.
+        */
+-      RETURN_EGL_ERROR(disp, EGL_BAD_NATIVE_WINDOW, EGL_NO_SURFACE);
++      if (disp->Platform == _EGL_PLATFORM_SURFACELESS) {
++         /* Allow window surface for kopper on macOS - don't return error */
++      } else
++#endif
++      {
++         /* From the EGL_MESA_platform_surfaceless spec (v1):
++          *
++          *    eglCreatePlatformWindowSurface fails when called with a <display>
++          *    that belongs to the surfaceless platform. It returns
++          *    EGL_NO_SURFACE and generates EGL_BAD_NATIVE_WINDOW. The
++          *    justification for this unconditional failure is that the
++          *    surfaceless platform has no native windows, and therefore the
++          *    <native_window> parameter is always invalid.
++          *
++          * This check must occur before checking the EGLConfig, which emits
++          * EGL_BAD_CONFIG.
++          */
++         RETURN_EGL_ERROR(disp, EGL_BAD_NATIVE_WINDOW, EGL_NO_SURFACE);
++      }
+    }
+ 
+    _EGL_CHECK_CONFIG(disp, conf, EGL_NO_SURFACE);
+@@ -2675,11 +2685,8 @@ eglQueryDeviceAttribEXT(EGLDeviceEXT device, EGLint attribute, EGLAttrib *value)
+ }
+ 
+ static EGLBoolean EGLAPIENTRY
+-eglQueryDeviceBinaryEXT(EGLDeviceEXT device,
+-                        EGLint name,
+-                        EGLint max_size,
+-                        void *value,
+-                        EGLint *size)
++eglQueryDeviceBinaryEXT(EGLDeviceEXT device, EGLint name, EGLint max_size,
++                        void *value, EGLint *size)
+ {
+    _EGLDevice *dev = _eglLookupDevice(device);
+ 
+@@ -2687,7 +2694,8 @@ eglQueryDeviceBinaryEXT(EGLDeviceEXT device,
+    if (!dev)
+       RETURN_EGL_ERROR(NULL, EGL_BAD_DEVICE_EXT, EGL_FALSE);
+ 
+-   RETURN_EGL_EVAL(NULL, _eglQueryDeviceBinaryEXT(dev, name, max_size, value, size));
++   RETURN_EGL_EVAL(NULL,
++                   _eglQueryDeviceBinaryEXT(dev, name, max_size, value, size));
+ }
+ 
+ static const char *EGLAPIENTRY
+diff --git a/src/egl/meson.build b/src/egl/meson.build
+index 16809846236..3a504252d8e 100644
+--- a/src/egl/meson.build
++++ b/src/egl/meson.build
+@@ -137,6 +137,12 @@ if with_dri
+     deps_for_egl += [dep_android, idep_u_gralloc]
+     files_egl += files('drivers/dri2/platform_android.c')
+   endif
++  if with_platform_macos
++    c_args_for_egl += [
++      '-DVK_USE_PLATFORM_METAL_EXT',
++    ]
++    link_args_for_egl += ['-lobjc']
++  endif
+ elif with_platform_haiku
+   c_args_for_egl += [
+     '-D_EGL_BUILT_IN_DRIVER_HAIKU',
+diff --git a/src/gallium/drivers/zink/zink_blit.c b/src/gallium/drivers/zink/zink_blit.c
+index faa76588af1..a66b5f3c09c 100644
+--- a/src/gallium/drivers/zink/zink_blit.c
++++ b/src/gallium/drivers/zink/zink_blit.c
+@@ -161,20 +161,28 @@ blit_native(struct zink_context *ctx, const struct pipe_blit_info *info, bool *n
+        util_format_get_mask(info->src.format) != info->mask ||
+        info->scissor_enable ||
+        info->swizzle_enable ||
+-       info->alpha_blend)
++       info->alpha_blend) {
++      fprintf(stderr, "DEBUG: blit_native rejected: mask/scissor/swizzle/alpha_blend\n");
+       return false;
++   }
+ 
+    if (info->render_condition_enable &&
+-       ctx->render_condition_active)
++       ctx->render_condition_active) {
++      fprintf(stderr, "DEBUG: blit_native rejected: render_condition\n");
+       return false;
++   }
+ 
+    if (util_format_is_depth_or_stencil(info->dst.format) &&
+-       (dst_format != info->src.format || info->filter == PIPE_TEX_FILTER_LINEAR))
++       (dst_format != info->src.format || info->filter == PIPE_TEX_FILTER_LINEAR)) {
++      fprintf(stderr, "DEBUG: blit_native rejected: depth/stencil format mismatch\n");
+       return false;
++   }
+ 
+    /* vkCmdBlitImage must not be used for multisampled source or destination images. */
+-   if (info->src.resource->nr_samples > 1 || info->dst.resource->nr_samples > 1)
++   if (info->src.resource->nr_samples > 1 || info->dst.resource->nr_samples > 1) {
++      fprintf(stderr, "DEBUG: blit_native rejected: multisampled\n");
+       return false;
++   }
+ 
+    struct zink_resource *src = zink_resource(info->src.resource);
+    struct zink_resource *use_src = src;
+@@ -188,28 +196,55 @@ blit_native(struct zink_context *ctx, const struct pipe_blit_info *info, bool *n
+    VkFormat dst_aspect_fmt = dst_aspects == VK_IMAGE_ASPECT_COLOR_BIT ? dst->format :
+                              dst_aspects == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) ? dst_vkformat :
+                              vk_format_get_aspect_format(dst_vkformat, dst_aspects);
+-   if (src->format != zink_get_format(screen, info->src.format) || dst_aspect_fmt != dst_vkformat)
++   if (src->format != zink_get_format(screen, info->src.format) || dst_aspect_fmt != dst_vkformat) {
++      fprintf(stderr, "DEBUG: blit_native rejected: format aspect mismatch src_format=%u vs expected=%u, dst_aspect_fmt=%u vs dst_vkformat=%u\n",
++              src->format, zink_get_format(screen, info->src.format), dst_aspect_fmt, dst_vkformat);
+       return false;
++   }
+    /* TODO: remove this in the future when spec permits to allow single-aspected blits */
+    if (src->format != zink_get_format(screen, info->src.format) ||
+-       dst->format != zink_get_format(screen, info->dst.format))
++       dst->format != zink_get_format(screen, info->dst.format)) {
++      fprintf(stderr, "DEBUG: blit_native rejected: format mismatch src->format=%u vs info->src.format=%s, dst->format=%u vs info->dst.format=%s\n",
++              src->format, util_format_short_name(info->src.format),
++              dst->format, util_format_short_name(info->dst.format));
+       return false;
+-   if (src->format != VK_FORMAT_A8_UNORM_KHR && zink_format_is_emulated_alpha(info->src.format))
++   }
++   if (src->format != VK_FORMAT_A8_UNORM_KHR && zink_format_is_emulated_alpha(info->src.format)) {
++      fprintf(stderr, "DEBUG: blit_native rejected: emulated alpha\n");
+       return false;
++   }
+ 
+    if (!(src->obj->vkfeats & VK_FORMAT_FEATURE_BLIT_SRC_BIT) ||
+-       !(dst->obj->vkfeats & VK_FORMAT_FEATURE_BLIT_DST_BIT))
++       !(dst->obj->vkfeats & VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
++      fprintf(stderr, "DEBUG: blit_native rejected: missing blit feature bits src=0x%x dst=0x%x\n",
++              src->obj->vkfeats, dst->obj->vkfeats);
+       return false;
++   }
+ 
+    if ((util_format_is_pure_sint(info->src.format) !=
+         util_format_is_pure_sint(info->dst.format)) ||
+        (util_format_is_pure_uint(info->src.format) !=
+-        util_format_is_pure_uint(info->dst.format)))
++        util_format_is_pure_uint(info->dst.format))) {
++      fprintf(stderr, "DEBUG: blit_native rejected: sint/uint mismatch\n");
+       return false;
++   }
+ 
+    if (info->filter == PIPE_TEX_FILTER_LINEAR &&
+-       !(src->obj->vkfeats & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
++       !(src->obj->vkfeats & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) {
++      fprintf(stderr, "DEBUG: blit_native rejected: linear filter not supported\n");
+       return false;
++   }
++
++   /* TESTING: Allow format conversion to test alpha=1 fix
++    * Reject blits that require format conversion - kosmickrisp's meta blit
++    * texture sampling via argument buffers has issues
++   if (info->src.format != info->dst.format) {
++      fprintf(stderr, "DEBUG: blit_native rejected: format conversion needed %s -> %s\n",
++              util_format_short_name(info->src.format),
++              util_format_short_name(info->dst.format));
++      return false;
++   }
++   */
+ 
+ 
+    VkImageBlit region = {0};
+@@ -321,6 +356,12 @@ blit_native(struct zink_context *ctx, const struct pipe_blit_info *info, bool *n
+                                              info->src.box.width, info->src.box.height,
+                                              info->dst.box.width, info->dst.box.height);
+ 
++   fprintf(stderr, "DEBUG: blit_native VkImages: src=%p dst=%p dst_dt_idx=%u dst_is_swapchain=%d\n",
++           (void*)use_src->obj->image,
++           (void*)dst->obj->image,
++           dst->obj->dt_idx,
++           dst->swapchain ? 1 : 0);
++
+    VKCTX(CmdBlitImage)(cmdbuf, use_src->obj->image, src->layout,
+                   dst->obj->image, dst->layout,
+                   1, &region,
+@@ -367,6 +408,13 @@ zink_blit(struct pipe_context *pctx,
+       dst = dst->transient;
+    bool needs_present_readback = false;
+ 
++   fprintf(stderr, "DEBUG: zink_blit: src=%s %dx%d -> dst=%s %dx%d mask=0x%x\n",
++           util_format_short_name(info->src.format),
++           info->src.box.width, info->src.box.height,
++           util_format_short_name(info->dst.format),
++           info->dst.box.width, info->dst.box.height,
++           info->mask);
++
+    if (ctx->awaiting_resolve && ctx->in_rp && ctx->dynamic_fb.tc_info.has_resolve) {
+       bool is_depth = util_format_is_depth_or_stencil(info->src.format);
+       struct pipe_resource *resolve = ctx->fb_state.resolve;
+@@ -395,14 +443,21 @@ zink_blit(struct pipe_context *pctx,
+        */
+       if (info->src.resource->nr_samples > 1 &&
+           info->dst.resource->nr_samples <= 1) {
+-         if (blit_resolve(ctx, info, &needs_present_readback))
++         if (blit_resolve(ctx, info, &needs_present_readback)) {
++            fprintf(stderr, "DEBUG: blit_resolve succeeded\n");
+             goto end;
++         }
+       } else {
+-         if (try_copy_region(pctx, info))
++         if (try_copy_region(pctx, info)) {
++            fprintf(stderr, "DEBUG: try_copy_region succeeded\n");
+             goto end;
+-         if (blit_native(ctx, info, &needs_present_readback))
++         }
++         if (blit_native(ctx, info, &needs_present_readback)) {
++            fprintf(stderr, "DEBUG: blit_native succeeded\n");
+             goto end;
++         }
+       }
++      fprintf(stderr, "DEBUG: using util_blitter fallback\n");
+    }
+ 
+ 
+@@ -555,6 +610,20 @@ zink_blit(struct pipe_context *pctx,
+    } else {
+       struct pipe_blit_info new_info = *info;
+       new_info.src.resource = &use_src->base.b;
++
++      fprintf(stderr, "DEBUG: zink_blit util_blitter path - srcbox y=%d height=%d\n",
++              new_info.src.box.y, new_info.src.box.height);
++
++      /* Fix Y-flip coordinates: when srcbox has y=0 and negative height (Y-flip),
++       * the source region would span from y=0 to y=-height which is invalid.
++       * Instead, adjust to y=abs(height) with negative height to read from the
++       * valid texture region in reverse order (0 to height, flipped). */
++      if (new_info.src.box.height < 0 && new_info.src.box.y == 0) {
++         new_info.src.box.y = -new_info.src.box.height;
++         fprintf(stderr, "DEBUG: zink_blit fixed Y-flip: src.box.y now %d, height %d\n",
++                 new_info.src.box.y, new_info.src.box.height);
++      }
++
+       util_blitter_blit(ctx->blitter, &new_info, NULL);
+    }
+    ctx->blitting = false;
+diff --git a/src/gallium/drivers/zink/zink_instance.py b/src/gallium/drivers/zink/zink_instance.py
+index 234d0ec02cd..ae909011078 100755
+--- a/src/gallium/drivers/zink/zink_instance.py
++++ b/src/gallium/drivers/zink/zink_instance.py
+@@ -54,6 +54,7 @@ EXTENSIONS = [
+ if platform.system() == "Darwin":
+     EXTENSIONS += [
+         Extension("VK_KHR_portability_enumeration"),
++        Extension("VK_EXT_metal_surface"),
+     ]
+ 
+ # constructor: Layer(name, conditions=[])
+diff --git a/src/gallium/drivers/zink/zink_kopper.c b/src/gallium/drivers/zink/zink_kopper.c
+index 2773efbe29f..af4cd07fd12 100644
+--- a/src/gallium/drivers/zink/zink_kopper.c
++++ b/src/gallium/drivers/zink/zink_kopper.c
+@@ -23,6 +23,7 @@
+  */
+ 
+ #include "util/detect_os.h"
++#include <stdio.h>
+ 
+ #include "zink_context.h"
+ #include "zink_screen.h"
+@@ -30,6 +31,11 @@
+ #include "zink_resource.h"
+ #include "zink_kopper.h"
+ 
++#if defined(__APPLE__)
++#define VK_USE_PLATFORM_METAL_EXT
++#include <vulkan/vulkan_metal.h>
++#endif
++
+ static void
+ zink_kopper_set_present_mode_for_interval(struct kopper_displaytarget *cdt, int interval)
+ {
+@@ -79,6 +85,11 @@ init_dt_type(struct kopper_displaytarget *cdt)
+    case VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR:
+       cdt->type = KOPPER_WIN32;
+       break;
++#endif
++#ifdef VK_USE_PLATFORM_METAL_EXT
++   case VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT:
++      cdt->type = KOPPER_METAL;
++      break;
+ #endif
+    default:
+       UNREACHABLE("unsupported!");
+@@ -118,6 +129,20 @@ kopper_CreateSurface(struct zink_screen *screen, struct kopper_displaytarget *cd
+       error = VKSCR(CreateWin32SurfaceKHR)(screen->instance, win32, NULL, &surface);
+       break;
+    }
++#endif
++#ifdef VK_USE_PLATFORM_METAL_EXT
++   case VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT: {
++      VkMetalSurfaceCreateInfoEXT *metal = (VkMetalSurfaceCreateInfoEXT *)&cdt->info.bos;
++      PFN_vkCreateMetalSurfaceEXT createMetalSurfaceEXT = (PFN_vkCreateMetalSurfaceEXT)VKSCR(GetInstanceProcAddr)(screen->instance, "vkCreateMetalSurfaceEXT");
++      if (createMetalSurfaceEXT) {
++         error = createMetalSurfaceEXT(screen->instance, metal, NULL, &surface);
++         fprintf(stderr, "DEBUG: vkCreateMetalSurfaceEXT returned %d, surface=%p, pLayer=%p\n", error, (void*)surface, metal->pLayer);
++      } else {
++         fprintf(stderr, "DEBUG: vkCreateMetalSurfaceEXT not found!\n");
++         error = VK_ERROR_EXTENSION_NOT_PRESENT;
++      }
++      break;
++   }
+ #endif
+    default:
+       UNREACHABLE("unsupported!");
+@@ -128,6 +153,7 @@ kopper_CreateSurface(struct zink_screen *screen, struct kopper_displaytarget *cd
+ 
+    VkBool32 supported;
+    error = VKSCR(GetPhysicalDeviceSurfaceSupportKHR)(screen->pdev, screen->gfx_queue, surface, &supported);
++   fprintf(stderr, "DEBUG: GetPhysicalDeviceSurfaceSupportKHR error=%d supported=%d\n", error, supported);
+    if (!zink_screen_handle_vkresult(screen, error) || !supported)
+       goto fail;
+ 
+@@ -234,6 +260,13 @@ find_dt_entry(struct zink_screen *screen, const struct kopper_displaytarget *cdt
+       he = _mesa_hash_table_search(&screen->dts, win32->hwnd);
+       break;
+    }
++#endif
++#ifdef VK_USE_PLATFORM_METAL_EXT
++   case KOPPER_METAL: {
++      VkMetalSurfaceCreateInfoEXT *metal = (VkMetalSurfaceCreateInfoEXT *)&cdt->info.bos;
++      he = _mesa_hash_table_search(&screen->dts, (void*)metal->pLayer);
++      break;
++   }
+ #endif
+    default:
+       UNREACHABLE("unsupported!");
+@@ -298,9 +331,9 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
+       cswap->scci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+       cswap->scci.queueFamilyIndexCount = 0;
+       cswap->scci.pQueueFamilyIndices = NULL;
+-      cswap->scci.compositeAlpha = has_alpha && !cdt->info.present_opaque
+-                                   ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
+-                                   : VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
++      /* Force OPAQUE on Metal - prevents alpha blending with desktop.
++       * Applications that need true alpha compositing are rare on macOS. */
++      cswap->scci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+       cswap->scci.clipped = VK_TRUE;
+    }
+    cswap->scci.presentMode = cdt->present_mode;
+@@ -332,6 +365,7 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
+       }
+       break;
+    case KOPPER_WAYLAND:
++   case KOPPER_METAL:
+       /* On Wayland, currentExtent is the special value (0xFFFFFFFF, 0xFFFFFFFF), indicating that the
+        * surface size will be determined by the extent of a swapchain targeting the surface. Whatever the
+        * application sets a swapchain’s imageExtent to will be the size of the window, after the first image is
+@@ -406,10 +440,14 @@ update_caps(struct zink_screen *screen, struct kopper_displaytarget *cdt)
+ static VkResult
+ update_swapchain(struct zink_screen *screen, struct kopper_displaytarget *cdt, unsigned w, unsigned h)
+ {
++   fprintf(stderr, "DEBUG: update_swapchain ENTER w=%u h=%u\n", w, h);
+    VkResult error = update_caps(screen, cdt);
++   fprintf(stderr, "DEBUG: update_caps returned %d\n", error);
+    if (error != VK_SUCCESS)
+       return error;
++   fprintf(stderr, "DEBUG: calling kopper_CreateSwapchain\n");
+    struct kopper_swapchain *cswap = kopper_CreateSwapchain(screen, cdt, w, h, &error);
++   fprintf(stderr, "DEBUG: kopper_CreateSwapchain returned cswap=%p error=%d\n", (void*)cswap, error);
+    if (!cswap)
+       return error;
+    prune_old_swapchains(screen, cdt, false);
+@@ -419,7 +457,10 @@ update_swapchain(struct zink_screen *screen, struct kopper_displaytarget *cdt, u
+    *pswap = cdt->swapchain;
+    cdt->swapchain = cswap;
+ 
+-   return kopper_GetSwapchainImages(screen, cdt->swapchain);
++   fprintf(stderr, "DEBUG: calling kopper_GetSwapchainImages\n");
++   VkResult ret = kopper_GetSwapchainImages(screen, cdt->swapchain);
++   fprintf(stderr, "DEBUG: kopper_GetSwapchainImages returned %d\n", ret);
++   return ret;
+ }
+ 
+ struct kopper_displaytarget *
+@@ -428,6 +469,9 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
+                                  unsigned height, unsigned alignment,
+                                  const void *loader_private, unsigned *stride)
+ {
++   if (!width) width = 1;
++   if (!height) height = 1;
++   fprintf(stderr, "DEBUG: ENTERING zink_kopper_displaytarget_create w=%u h=%u\n", width, height);
+    struct kopper_displaytarget *cdt;
+    const struct kopper_loader_info *info = loader_private;
+ 
+@@ -444,6 +488,7 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
+             break;
+          case KOPPER_WAYLAND:
+          case KOPPER_WIN32:
++         case KOPPER_METAL:
+             _mesa_hash_table_init(&screen->dts, screen, _mesa_hash_pointer, _mesa_key_pointer_equal);
+             break;
+          default:
+@@ -476,6 +521,7 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
+       if (srgb == format)
+          srgb = PIPE_FORMAT_NONE;
+    }
++   /* Force RGBA format to avoid BGRA format conversion issues in kosmickrisp blit */
+    cdt->formats[0] = zink_get_format(screen, format);
+    if (srgb) {
+       cdt->format_list.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
+@@ -486,7 +532,9 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
+       cdt->formats[1] = zink_get_format(screen, srgb);
+    }
+ 
++   fprintf(stderr, "DEBUG: zink_kopper_displaytarget_create calling kopper_CreateSurface w=%u h=%u sType=%u\n", width, height, cdt->info.bos.sType);
+    cdt->surface = kopper_CreateSurface(screen, cdt);
++   fprintf(stderr, "DEBUG: kopper_CreateSurface returned surface=%p\n", (void*)cdt->surface);
+    if (!cdt->surface)
+       goto out;
+ 
+@@ -515,6 +563,13 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
+       _mesa_hash_table_insert(&screen->dts, win32->hwnd, cdt);
+       break;
+    }
++#endif
++#ifdef VK_USE_PLATFORM_METAL_EXT
++   case KOPPER_METAL: {
++      VkMetalSurfaceCreateInfoEXT *metal = (VkMetalSurfaceCreateInfoEXT *)&cdt->info.bos;
++      _mesa_hash_table_insert(&screen->dts, (void*)metal->pLayer, cdt);
++      break;
++   }
+ #endif
+    default:
+       UNREACHABLE("unsupported!");
+@@ -694,8 +749,9 @@ zink_kopper_acquire(struct zink_context *ctx, struct zink_resource *res, uint64_
+       return false;
+    }
+    const struct kopper_swapchain *cswap = cdt->swapchain;
+-   res->obj->new_dt |= res->base.b.width0 != cswap->scci.imageExtent.width ||
+-                       res->base.b.height0 != cswap->scci.imageExtent.height;
++   bool size_mismatch = res->base.b.width0 != cswap->scci.imageExtent.width ||
++                        res->base.b.height0 != cswap->scci.imageExtent.height;
++   res->obj->new_dt |= size_mismatch;
+    struct zink_screen *zscreen = zink_screen(kopper_get_zink_screen(ctx->base.screen));
+    VkResult ret = kopper_acquire(zscreen, res, timeout);
+    if (ret == VK_SUCCESS || ret == VK_SUBOPTIMAL_KHR) {
+@@ -784,15 +840,18 @@ kopper_present(void *data, void *gdata, int thread_idx)
+       cpi->info.pWaitSemaphores = NULL;
+       cpi->info.waitSemaphoreCount = 0;
+    }
++   fprintf(stderr, "DEBUG: kopper_present calling QueuePresentKHR image=%u swapchain=%p\n", cpi->image, (void*)swapchain);
+    VkResult error2 = VKSCR(QueuePresentKHR)(screen->queue, &cpi->info);
++   fprintf(stderr, "DEBUG: QueuePresentKHR returned %d\n", error2);
+    zink_screen_debug_marker_end(screen, screen->frame_marker_emitted);
+    zink_screen_debug_marker_begin(screen, "frame");
+    simple_mtx_unlock(screen->queue_lock);
+    swapchain->last_present = cpi->image;
+    if (cpi->indefinite_acquire)
+       p_atomic_dec(&swapchain->num_acquires);
+-   if (error2 == VK_SUBOPTIMAL_KHR && cdt->swapchain == swapchain)
++   if (error2 == VK_SUBOPTIMAL_KHR && cdt->swapchain == swapchain) {
+       cpi->res->obj->new_dt = true;
++   }
+ 
+    /* it's illegal to destroy semaphores if they're in use by a cmdbuf.
+     * but what does "in use" actually mean?
+@@ -1110,31 +1169,35 @@ zink_kopper_update(struct pipe_screen *pscreen, struct pipe_resource *pres, int
+    if (!res->obj->dt)
+       return false;
+    struct kopper_displaytarget *cdt = res->obj->dt;
+-   if (cdt->type != KOPPER_X11) {
+-      *w = res->base.b.width0;
+-      *h = res->base.b.height0;
+-      return true;
+-   }
+-   VkResult ret = update_caps(screen, cdt);
+-   if (ret != VK_SUCCESS) {
+-      mesa_loge("zink: failed to update swapchain capabilities: %s", vk_Result_to_str(ret));
+-      cdt->is_kill = true;
+-      return false;
+-   }
++   /* For X11 and Metal surfaces, query the current surface capabilities to get
++    * the actual drawable size. This is necessary to handle window resizing.
++    */
++   if (cdt->type == KOPPER_X11 || cdt->type == KOPPER_METAL) {
++      VkResult ret = update_caps(screen, cdt);
++      if (ret != VK_SUCCESS) {
++         mesa_loge("zink: failed to update swapchain capabilities: %s", vk_Result_to_str(ret));
++         cdt->is_kill = true;
++         return false;
++      }
+ 
+-   if (cdt->caps.currentExtent.width == 0xFFFFFFFF && cdt->caps.currentExtent.height == 0xFFFFFFFF) {
+-      /*
+-         currentExtent is the current width and height of the surface, or the special value (0xFFFFFFFF,
+-         0xFFFFFFFF) indicating that the surface size will be determined by the extent of a swapchain
+-         targeting the surface.
+-       */
+-      *w = res->base.b.width0;
+-      *h = res->base.b.height0;
++      if (cdt->caps.currentExtent.width == 0xFFFFFFFF && cdt->caps.currentExtent.height == 0xFFFFFFFF) {
++         /*
++            currentExtent is the current width and height of the surface, or the special value (0xFFFFFFFF,
++            0xFFFFFFFF) indicating that the surface size will be determined by the extent of a swapchain
++            targeting the surface.
++          */
++         *w = res->base.b.width0;
++         *h = res->base.b.height0;
++         return true;
++      }
++
++      *w = cdt->caps.currentExtent.width;
++      *h = cdt->caps.currentExtent.height;
+       return true;
+    }
+-
+-   *w = cdt->caps.currentExtent.width;
+-   *h = cdt->caps.currentExtent.height;
++   /* For other surface types (e.g. Wayland), just return the resource dimensions */
++   *w = res->base.b.width0;
++   *h = res->base.b.height0;
+    return true;
+ }
+ 
+diff --git a/src/gallium/drivers/zink/zink_kopper.h b/src/gallium/drivers/zink/zink_kopper.h
+index d1971ecb8b5..54d45584edc 100644
+--- a/src/gallium/drivers/zink/zink_kopper.h
++++ b/src/gallium/drivers/zink/zink_kopper.h
+@@ -74,7 +74,8 @@ struct kopper_swapchain {
+ enum kopper_type {
+    KOPPER_X11,
+    KOPPER_WAYLAND,
+-   KOPPER_WIN32
++   KOPPER_WIN32,
++   KOPPER_METAL
+ };
+ 
+ struct kopper_displaytarget
+diff --git a/src/gallium/drivers/zink/zink_resource.c b/src/gallium/drivers/zink/zink_resource.c
+index 15ac1adce74..9a08624afd8 100644
+--- a/src/gallium/drivers/zink/zink_resource.c
++++ b/src/gallium/drivers/zink/zink_resource.c
+@@ -1949,6 +1949,8 @@ resource_create(struct pipe_screen *pscreen,
+       if (cdt->swapchain->scci.flags == VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR)
+          res->obj->vkflags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+       res->obj->vkusage = cdt->swapchain->scci.imageUsage;
++      /* Set format features for swapchain images - they use optimal tiling */
++      res->obj->vkfeats = zink_get_format_props(screen, templ->format)->optimalTilingFeatures;
+       res->base.b.bind |= PIPE_BIND_DISPLAY_TARGET;
+       res->linear = false;
+       res->swapchain = true;
+diff --git a/src/gallium/drivers/zink/zink_screen.c b/src/gallium/drivers/zink/zink_screen.c
+index 2a008534a4e..d92ee32b4e6 100644
+--- a/src/gallium/drivers/zink/zink_screen.c
++++ b/src/gallium/drivers/zink/zink_screen.c
+@@ -120,6 +120,7 @@ zink_debug_options[] = {
+    { "rploads", ZINK_DEBUG_RPLOADS, "Zap renderpass loads for DONT_CARE" },
+    { "nogeneral", ZINK_DEBUG_NOGENERAL, "Disable GENERAL layout usage for supported hardware" },
+    { "rpstores", ZINK_DEBUG_RPSTORES, "Zap renderpass stores for DONT_CARE" },
++   { "dummydes", ZINK_DEBUG_DUMMYDES, "Use dummy descriptors even if nullDescriptor is available" },
+    DEBUG_NAMED_VALUE_END
+ };
+ 
+@@ -317,9 +318,17 @@ disk_cache_init(struct zink_screen *screen)
+    /* Hash in the zink driver build. */
+    const struct build_id_note *note =
+        build_id_find_nhdr_for_addr(disk_cache_init);
+-   unsigned build_id_len = build_id_length(note);
++   unsigned build_id_len = note ? build_id_length(note) : 0;
++#ifdef __APPLE__
++   /* macOS doesn't have ELF build IDs, so we can't rely on them.
++    * Just proceed without the build ID in the hash.
++    */
++   if (note && build_id_len > 0)
++      _mesa_blake3_update(&ctx, build_id_data(note), build_id_len);
++#else
+    assert(note && build_id_len <= BUILD_ID_EXPECTED_HASH_LENGTH);
+    _mesa_blake3_update(&ctx, build_id_data(note), build_id_len);
++#endif
+ #endif
+ 
+    /* Hash in the Vulkan pipeline cache UUID to identify the combination of
+@@ -3504,11 +3513,6 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
+       goto fail;
+    }
+ 
+-   if (!screen->info.rb2_feats.nullDescriptor) {
+-      mesa_loge("Zink requires the nullDescriptor feature of KHR/EXT robustness2.");
+-      goto fail;
+-   }
+-
+    if (zink_set_driver_strings(screen)) {
+       mesa_loge("ZINK: failed to set driver strings\n");
+       goto fail;
+@@ -3748,6 +3752,14 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
+          }
+          can_db = false;
+       }
++      if (!screen->info.rb2_feats.nullDescriptor || (zink_debug & ZINK_DEBUG_DUMMYDES)) {
++         if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
++            if (!screen->driver_name_is_inferred)
++               mesa_loge("Cannot use db descriptor mode without robustness2.nullDescriptor");
++            goto fail;
++         }
++         can_db = false;
++      }
+       if (ZINK_FBFETCH_DESCRIPTOR_SIZE < screen->info.db_props.inputAttachmentDescriptorSize) {
+          if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
+             if (!screen->driver_name_is_inferred)
+diff --git a/src/gallium/drivers/zink/zink_types.h b/src/gallium/drivers/zink/zink_types.h
+index 9e6d43d3ea3..b94a74e2a47 100644
+--- a/src/gallium/drivers/zink/zink_types.h
++++ b/src/gallium/drivers/zink/zink_types.h
+@@ -263,6 +263,7 @@ enum zink_debug {
+    ZINK_DEBUG_RPLOADS = (1<<21),
+    ZINK_DEBUG_NOGENERAL = (1<<22),
+    ZINK_DEBUG_RPSTORES = (1<<23),
++   ZINK_DEBUG_DUMMYDES = (1<<24),
+ };
+ 
+ enum zink_pv_emulation_primitive {
+diff --git a/src/gallium/frontends/dri/kopper.c b/src/gallium/frontends/dri/kopper.c
+index 45f90908067..d16aff2c8f0 100644
+--- a/src/gallium/frontends/dri/kopper.c
++++ b/src/gallium/frontends/dri/kopper.c
+@@ -240,6 +240,12 @@ kopper_allocate_textures(struct dri_context *ctx,
+    width  = drawable->w;
+    height = drawable->h;
+ 
++   /* Clamp to 1 to prevent 0-sized resources (e.g. MSAA/transient buffers)
++    * from crashing vk_image_init when the window is initially 0x0.
++    */
++   if (!width) width = 1;
++   if (!height) height = 1;
++
+    resized = (drawable->old_w != width ||
+               drawable->old_h != height);
+ 
+@@ -365,10 +371,16 @@ kopper_update_drawable_info(struct dri_drawable *drawable)
+                                 drawable->textures[ST_ATTACHMENT_FRONT_LEFT];
+ 
+    bool do_kopper_update = is_window && ptex && screen->fd == -1;
+-   if (drawable->info.bos.sType == VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR && do_kopper_update)
++   /* For X11 and Metal surfaces, use zink_kopper_update which queries the
++    * actual surface capabilities to get the current drawable size.
++    */
++   if (do_kopper_update &&
++       (drawable->info.bos.sType == VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR ||
++        drawable->info.bos.sType == VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT)) {
+       zink_kopper_update(kopper_get_zink_screen(screen->base.screen), ptex, &drawable->w, &drawable->h);
+-   else
++   } else {
+       get_drawable_info(drawable, &drawable->w, &drawable->h);
++   }
+ }
+ 
+ static inline void
+diff --git a/src/glwrapper/libgl_interpose.c b/src/glwrapper/libgl_interpose.c
+new file mode 100644
+index 00000000000..6cb24a7dbe8
+--- /dev/null
++++ b/src/glwrapper/libgl_interpose.c
+@@ -0,0 +1,50 @@
++/*
++ * Mesa libGL wrapper for macOS EGL using dlsym interposition
++ */
++
++#include <dlfcn.h>
++#include <stdio.h>
++#include <string.h>
++#include <stddef.h>
++#include <EGL/egl.h>
++
++/* DYLD_INTERPOSE macro - define it ourselves */
++#define DYLD_INTERPOSE(_replacement,_replacee) \
++   __attribute__((used)) static struct{ const void* replacement; const void* replacee; } _interpose_##_replacee \
++   __attribute__ ((section ("__DATA,__interpose"))) = { (const void*)(unsigned long)&_replacement, (const void*)(unsigned long)&_replacee };
++
++static void *egl_handle = NULL;
++static PFNEGLGETPROCADDRESSPROC mesa_eglGetProcAddress = NULL;
++static int initialized = 0;
++
++static void ensure_initialized(void) {
++    if (initialized) return;
++    initialized = 1;
++    
++    egl_handle = dlopen("/Users/lucamignatti/mesa-native/lib/libEGL.dylib", RTLD_NOW | RTLD_LOCAL);
++    if (egl_handle) {
++        fprintf(stderr, "libGL interpose: Loaded Mesa EGL\n");
++        mesa_eglGetProcAddress = (PFNEGLGETPROCADDRESSPROC)dlsym(egl_handle, "eglGetProcAddress");
++        if (mesa_eglGetProcAddress) {
++            fprintf(stderr, "libGL interpose: Ready to forward GL calls\n");
++        }
++    }
++}
++
++/* Interpose dlsym to catch GL function lookups */
++void *my_dlsym(void *handle, const char *symbol) {
++    ensure_initialized();
++    
++    /* If looking for a GL function, use eglGetProcAddress */
++    if (symbol && strncmp(symbol, "gl", 2) == 0 && mesa_eglGetProcAddress) {
++        void *proc = (void*)mesa_eglGetProcAddress(symbol);
++        if (proc) {
++            return proc;
++        }
++    }
++    
++    /* Fall back to real dlsym */
++    return dlsym(handle, symbol);
++}
++
++DYLD_INTERPOSE(my_dlsym, dlsym)
+diff --git a/src/glwrapper/libgl_wrapper.c b/src/glwrapper/libgl_wrapper.c
+new file mode 100644
+index 00000000000..ec87aaf2993
+--- /dev/null
++++ b/src/glwrapper/libgl_wrapper.c
+@@ -0,0 +1,357 @@
++/*
++ * Mesa libGL wrapper for macOS EGL
++ * 
++ * This library provides libGL.dylib compatibility for applications that load
++ * OpenGL functions via dlsym on libGL, but the actual OpenGL context is
++ * created via EGL/Zink.
++ * 
++ * It forwards all OpenGL function lookups to eglGetProcAddress.
++ */
++
++#include <dlfcn.h>
++#include <stdio.h>
++#include <string.h>
++#include <stddef.h>
++#include <EGL/egl.h>
++
++/* Type definitions */
++typedef unsigned int GLenum;
++typedef unsigned int GLuint;
++typedef int GLint;
++typedef int GLsizei;
++typedef unsigned char GLubyte;
++typedef unsigned char GLboolean;
++typedef float GLfloat;
++typedef double GLdouble;
++typedef void GLvoid;
++typedef ptrdiff_t GLintptr;
++typedef ptrdiff_t GLsizeiptr;
++
++typedef void (*PFNGLPROC)(void);
++
++static void *egl_handle = NULL;
++static PFNEGLGETPROCADDRESSPROC mesa_eglGetProcAddress = NULL;
++
++__attribute__((constructor))
++static void init_egl_loader(void) {
++    const char *egl_paths[] = {
++        "/Users/lucamignatti/mesa-native/lib/libEGL.dylib",
++        "libEGL.dylib",
++        NULL
++    };
++    
++    for (int i = 0; egl_paths[i] != NULL; i++) {
++        egl_handle = dlopen(egl_paths[i], RTLD_NOW | RTLD_LOCAL);
++        if (egl_handle) {
++            fprintf(stderr, "libGL wrapper: Loaded EGL from %s\n", egl_paths[i]);
++            break;
++        }
++    }
++    
++    if (!egl_handle) {
++        fprintf(stderr, "libGL wrapper: Failed to load libEGL.dylib\n");
++        return;
++    }
++    
++    mesa_eglGetProcAddress = (PFNEGLGETPROCADDRESSPROC)dlsym(egl_handle, "eglGetProcAddress");
++    if (!mesa_eglGetProcAddress) {
++        fprintf(stderr, "libGL wrapper: Failed to find eglGetProcAddress\n");
++    } else {
++        fprintf(stderr, "libGL wrapper: Successfully initialized EGL function loader\n");
++    }
++}
++
++static PFNGLPROC get_gl_proc(const char *name) {
++    if (mesa_eglGetProcAddress) {
++        return (PFNGLPROC)mesa_eglGetProcAddress(name);
++    }
++    return NULL;
++}
++
++/* ============== Core OpenGL Functions ============== */
++
++/* glGetError */
++GLenum glGetError(void) {
++    static GLenum (*fn)(void) = NULL;
++    if (!fn) {
++        fn = (GLenum (*)(void))get_gl_proc("glGetError");
++        if (fn) fprintf(stderr, "libGL wrapper: glGetError loaded\n");
++    }
++    return fn ? fn() : 0;
++}
++
++/* glGetString */
++const GLubyte *glGetString(GLenum name) {
++    static const GLubyte *(*fn)(GLenum) = NULL;
++    if (!fn) {
++        fn = (const GLubyte *(*)(GLenum))get_gl_proc("glGetString");
++        if (fn) fprintf(stderr, "libGL wrapper: glGetString loaded\n");
++    }
++    return fn ? fn(name) : NULL;
++}
++
++/* glGetStringi - Required by LWJGL for capabilities */
++const GLubyte *glGetStringi(GLenum name, GLuint index) {
++    static const GLubyte *(*fn)(GLenum, GLuint) = NULL;
++    if (!fn) {
++        fn = (const GLubyte *(*)(GLenum, GLuint))get_gl_proc("glGetStringi");
++        if (fn) fprintf(stderr, "libGL wrapper: glGetStringi loaded\n");
++    }
++    return fn ? fn(name, index) : NULL;
++}
++
++/* glGetIntegerv */
++void glGetIntegerv(GLenum pname, GLint *params) {
++    static void (*fn)(GLenum, GLint*) = NULL;
++    if (!fn) {
++        fn = (void (*)(GLenum, GLint*))get_gl_proc("glGetIntegerv");
++    }
++    if (fn) fn(pname, params);
++}
++
++/* glGetFloatv */
++void glGetFloatv(GLenum pname, GLfloat *params) {
++    static void (*fn)(GLenum, GLfloat*) = NULL;
++    if (!fn) {
++        fn = (void (*)(GLenum, GLfloat*))get_gl_proc("glGetFloatv");
++    }
++    if (fn) fn(pname, params);
++}
++
++/* glGetDoublev */
++void glGetDoublev(GLenum pname, GLdouble *params) {
++    static void (*fn)(GLenum, GLdouble*) = NULL;
++    if (!fn) {
++        fn = (void (*)(GLenum, GLdouble*))get_gl_proc("glGetDoublev");
++    }
++    if (fn) fn(pname, params);
++}
++
++/* glGetBooleanv */
++void glGetBooleanv(GLenum pname, GLboolean *params) {
++    static void (*fn)(GLenum, GLboolean*) = NULL;
++    if (!fn) {
++        fn = (void (*)(GLenum, GLboolean*))get_gl_proc("glGetBooleanv");
++    }
++    if (fn) fn(pname, params);
++}
++
++/* glEnable */
++void glEnable(GLenum cap) {
++    static void (*fn)(GLenum) = NULL;
++    if (!fn) fn = (void (*)(GLenum))get_gl_proc("glEnable");
++    if (fn) fn(cap);
++}
++
++/* glDisable */
++void glDisable(GLenum cap) {
++    static void (*fn)(GLenum) = NULL;
++    if (!fn) fn = (void (*)(GLenum))get_gl_proc("glDisable");
++    if (fn) fn(cap);
++}
++
++/* glIsEnabled */
++GLboolean glIsEnabled(GLenum cap) {
++    static GLboolean (*fn)(GLenum) = NULL;
++    if (!fn) fn = (GLboolean (*)(GLenum))get_gl_proc("glIsEnabled");
++    return fn ? fn(cap) : 0;
++}
++
++/* glViewport */
++void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
++    static void (*fn)(GLint, GLint, GLsizei, GLsizei) = NULL;
++    if (!fn) fn = (void (*)(GLint, GLint, GLsizei, GLsizei))get_gl_proc("glViewport");
++    if (fn) fn(x, y, width, height);
++}
++
++/* glClear */
++void glClear(GLuint mask) {
++    static void (*fn)(GLuint) = NULL;
++    if (!fn) fn = (void (*)(GLuint))get_gl_proc("glClear");
++    if (fn) fn(mask);
++}
++
++/* glClearColor */
++void glClearColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha) {
++    static void (*fn)(GLfloat, GLfloat, GLfloat, GLfloat) = NULL;
++    if (!fn) fn = (void (*)(GLfloat, GLfloat, GLfloat, GLfloat))get_gl_proc("glClearColor");
++    if (fn) fn(red, green, blue, alpha);
++}
++
++/* glFlush */
++void glFlush(void) {
++    static void (*fn)(void) = NULL;
++    if (!fn) fn = (void (*)(void))get_gl_proc("glFlush");
++    if (fn) fn();
++}
++
++/* glFinish */
++void glFinish(void) {
++    static void (*fn)(void) = NULL;
++    if (!fn) fn = (void (*)(void))get_gl_proc("glFinish");
++    if (fn) fn();
++}
++
++/* glDepthMask */
++void glDepthMask(GLboolean flag) {
++    static void (*fn)(GLboolean) = NULL;
++    if (!fn) fn = (void (*)(GLboolean))get_gl_proc("glDepthMask");
++    if (fn) fn(flag);
++}
++
++/* glColorMask */
++void glColorMask(GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha) {
++    static void (*fn)(GLboolean, GLboolean, GLboolean, GLboolean) = NULL;
++    if (!fn) fn = (void (*)(GLboolean, GLboolean, GLboolean, GLboolean))get_gl_proc("glColorMask");
++    if (fn) fn(red, green, blue, alpha);
++}
++
++/* glBlendFunc */
++void glBlendFunc(GLenum sfactor, GLenum dfactor) {
++    static void (*fn)(GLenum, GLenum) = NULL;
++    if (!fn) fn = (void (*)(GLenum, GLenum))get_gl_proc("glBlendFunc");
++    if (fn) fn(sfactor, dfactor);
++}
++
++/* glDepthFunc */
++void glDepthFunc(GLenum func) {
++    static void (*fn)(GLenum) = NULL;
++    if (!fn) fn = (void (*)(GLenum))get_gl_proc("glDepthFunc");
++    if (fn) fn(func);
++}
++
++/* glCullFace */
++void glCullFace(GLenum mode) {
++    static void (*fn)(GLenum) = NULL;
++    if (!fn) fn = (void (*)(GLenum))get_gl_proc("glCullFace");
++    if (fn) fn(mode);
++}
++
++/* glFrontFace */
++void glFrontFace(GLenum mode) {
++    static void (*fn)(GLenum) = NULL;
++    if (!fn) fn = (void (*)(GLenum))get_gl_proc("glFrontFace");
++    if (fn) fn(mode);
++}
++
++/* glPolygonMode */
++void glPolygonMode(GLenum face, GLenum mode) {
++    static void (*fn)(GLenum, GLenum) = NULL;
++    if (!fn) fn = (void (*)(GLenum, GLenum))get_gl_proc("glPolygonMode");
++    if (fn) fn(face, mode);
++}
++
++/* glScissor */
++void glScissor(GLint x, GLint y, GLsizei width, GLsizei height) {
++    static void (*fn)(GLint, GLint, GLsizei, GLsizei) = NULL;
++    if (!fn) fn = (void (*)(GLint, GLint, GLsizei, GLsizei))get_gl_proc("glScissor");
++    if (fn) fn(x, y, width, height);
++}
++
++/* glPixelStorei */
++void glPixelStorei(GLenum pname, GLint param) {
++    static void (*fn)(GLenum, GLint) = NULL;
++    if (!fn) fn = (void (*)(GLenum, GLint))get_gl_proc("glPixelStorei");
++    if (fn) fn(pname, param);
++}
++
++/* glReadPixels */
++void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels) {
++    static void (*fn)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*) = NULL;
++    if (!fn) fn = (void (*)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*))get_gl_proc("glReadPixels");
++    if (fn) fn(x, y, width, height, format, type, pixels);
++}
++
++/* glDrawArrays */
++void glDrawArrays(GLenum mode, GLint first, GLsizei count) {
++    static void (*fn)(GLenum, GLint, GLsizei) = NULL;
++    if (!fn) fn = (void (*)(GLenum, GLint, GLsizei))get_gl_proc("glDrawArrays");
++    if (fn) fn(mode, first, count);
++}
++
++/* glDrawElements */
++void glDrawElements(GLenum mode, GLsizei count, GLenum type, const void *indices) {
++    static void (*fn)(GLenum, GLsizei, GLenum, const void*) = NULL;
++    if (!fn) fn = (void (*)(GLenum, GLsizei, GLenum, const void*))get_gl_proc("glDrawElements");
++    if (fn) fn(mode, count, type, indices);
++}
++
++/* glBindTexture */
++void glBindTexture(GLenum target, GLuint texture) {
++    static void (*fn)(GLenum, GLuint) = NULL;
++    if (!fn) fn = (void (*)(GLenum, GLuint))get_gl_proc("glBindTexture");
++    if (fn) fn(target, texture);
++}
++
++/* glGenTextures */
++void glGenTextures(GLsizei n, GLuint *textures) {
++    static void (*fn)(GLsizei, GLuint*) = NULL;
++    if (!fn) fn = (void (*)(GLsizei, GLuint*))get_gl_proc("glGenTextures");
++    if (fn) fn(n, textures);
++}
++
++/* glDeleteTextures */
++void glDeleteTextures(GLsizei n, const GLuint *textures) {
++    static void (*fn)(GLsizei, const GLuint*) = NULL;
++    if (!fn) fn = (void (*)(GLsizei, const GLuint*))get_gl_proc("glDeleteTextures");
++    if (fn) fn(n, textures);
++}
++
++/* glTexParameteri */
++void glTexParameteri(GLenum target, GLenum pname, GLint param) {
++    static void (*fn)(GLenum, GLenum, GLint) = NULL;
++    if (!fn) fn = (void (*)(GLenum, GLenum, GLint))get_gl_proc("glTexParameteri");
++    if (fn) fn(target, pname, param);
++}
++
++/* glTexImage2D */
++void glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void *pixels) {
++    static void (*fn)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*) = NULL;
++    if (!fn) fn = (void (*)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*))get_gl_proc("glTexImage2D");
++    if (fn) fn(target, level, internalformat, width, height, border, format, type, pixels);
++}
++
++/* glTexSubImage2D */
++void glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void *pixels) {
++    static void (*fn)(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, const void*) = NULL;
++    if (!fn) fn = (void (*)(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, const void*))get_gl_proc("glTexSubImage2D");
++    if (fn) fn(target, level, xoffset, yoffset, width, height, format, type, pixels);
++}
++
++/* glActiveTexture */
++void glActiveTexture(GLenum texture) {
++    static void (*fn)(GLenum) = NULL;
++    if (!fn) fn = (void (*)(GLenum))get_gl_proc("glActiveTexture");
++    if (fn) fn(texture);
++}
++
++/* glLineWidth */
++void glLineWidth(GLfloat width) {
++    static void (*fn)(GLfloat) = NULL;
++    if (!fn) fn = (void (*)(GLfloat))get_gl_proc("glLineWidth");
++    if (fn) fn(width);
++}
++
++/* glPointSize */
++void glPointSize(GLfloat size) {
++    static void (*fn)(GLfloat) = NULL;
++    if (!fn) fn = (void (*)(GLfloat))get_gl_proc("glPointSize");
++    if (fn) fn(size);
++}
++
++/* ============== Modern OpenGL / Extension query ============== */
++
++/* glGetProcAddress - Important for LWJGL to load extension functions */
++void *glXGetProcAddress(const char *procName) {
++    return (void*)get_gl_proc(procName);
++}
++
++void *glXGetProcAddressARB(const char *procName) {
++    return (void*)get_gl_proc(procName);
++}
++
++/* Create aliases for the function lookup */
++__attribute__((visibility("default")))
++void *wglGetProcAddress(const char *procName) {
++    return (void*)get_gl_proc(procName);
++}

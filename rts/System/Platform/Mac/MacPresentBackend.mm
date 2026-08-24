@@ -146,8 +146,6 @@ void* AttachMetalLayer(SDL_Window* window)
 	NSWindow* nswindow = (NSWindow*)info.info.cocoa.window;
 	NSView* view = [nswindow contentView];
 	if (view != nil) {
-		[view setWantsLayer:YES];
-
 		CAMetalLayer* layer = [CAMetalLayer layer];
 		if (layer != nil) {
 			[layer setFrame:[view bounds]];
@@ -158,8 +156,10 @@ void* AttachMetalLayer(SDL_Window* window)
 				[layer setContentsScale:[win backingScaleFactor]];
 
 			[view setLayer:layer];
+			[view setWantsLayer:YES];
 			return (void*)layer;
 		}
+		[view setWantsLayer:YES];
 	}
 	return (void*)view;
 }
@@ -285,6 +285,8 @@ int GpuCoreCount()
 
 namespace MacPresent {
 
+static bool s_haveWindowSurface = false;
+
 void CaptureBootDisplayModes(); // defined below (boot display-mode snapshot)
 
 bool CreateContext(SDL_Window* window)
@@ -323,11 +325,15 @@ bool CreateContext(SDL_Window* window)
 	// On macOS with Mesa-surfaceless EGL, EGL_WINDOW_BIT is unsupported.
 	// The actual presentation happens via the CAMetalLayer + KosmicKrisp WSI
 	// (Vulkan -> Metal), so we only need a pbuffer-capable config here.
+	const bool wantSwapchainCfg = (getenv("SPRING_MAC_SWAPCHAIN") != nullptr);
+	if (wantSwapchainCfg) {
+		setenv("ZINK_DEBUG", "norp", 0);
+	}
 	EGLint configAttribs[] = {
 		EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
 		EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8,
 		EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
-		EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+		EGL_SURFACE_TYPE, wantSwapchainCfg ? EGL_WINDOW_BIT : EGL_PBUFFER_BIT,
 		EGL_NONE
 	};
 	EGLConfig chosenConfig;
@@ -399,8 +405,21 @@ bool CreateContext(SDL_Window* window)
 		    "backing scale (%.2f), panel and GPU core count",
 		    pxW, pxH, (pxW * (double)pxH) / 1.0e6, winW, winH, bsfTrue);
 
-	if (nativeView) {
+	if (wantSwapchainCfg && nativeView != nullptr) {
+		CAMetalLayer* swapLayer = (CAMetalLayer*)nativeView;
+		NSWindow* nsw = NSWindowFor(window);
+		NSView* cv = (nsw != nil) ? [nsw contentView] : nil;
+		if (cv != nil)
+			[swapLayer setFrame:[cv bounds]];
+		[swapLayer setDrawableSize:CGSizeMake(pbufW, pbufH)];
+		LOG("[EGL] swapchain path: layer sized %dx%d px (frame %.0fx%.0f pt)",
+		    pbufW, pbufH, swapLayer.frame.size.width, swapLayer.frame.size.height);
+	}
+
+	if (wantSwapchainCfg && nativeView) {
 		eglSfc = eglCreateWindowSurface(eglDpy, chosenConfig, (EGLNativeWindowType)nativeView, NULL);
+		s_haveWindowSurface = (eglSfc != EGL_NO_SURFACE);
+		LOG("[EGL] window surface: %s", s_haveWindowSurface ? "created (swapchain available)" : "unavailable, using pbuffer");
 	}
 	if (eglSfc == EGL_NO_SURFACE) {
 		EGLint pbAttribs[] = { EGL_WIDTH, pbufW, EGL_HEIGHT, pbufH, EGL_NONE };
@@ -479,6 +498,11 @@ bool CreateContext(SDL_Window* window)
 	if (eglCtx == EGL_NO_CONTEXT) return false;
 
 	EGLBoolean mcOk = eglMakeCurrent(eglDpy, eglSfc, eglSfc, eglCtx);
+	if (mcOk == EGL_TRUE && wantSwapchainCfg) {
+		const bool wantVsync = (getenv("SPRING_MAC_VSYNC") != nullptr);
+		eglSwapInterval(eglDpy, wantVsync ? 1 : 0);
+		LOG("[EGL] swapchain present interval: %d", wantVsync ? 1 : 0);
+	}
 	MAC_DLOG("[EGL] eglMakeCurrent -> %d (lastError=0x%x)\n", (int)mcOk, eglGetError());
 	if (!mcOk)
 		return false;
@@ -512,7 +536,9 @@ bool CreateContext(SDL_Window* window)
 	}
 
 	// Set up the manual present path now that the layer + context exist.
-	if (!MacMetalPresent_Init(metalLayer))
+	if (wantSwapchainCfg) {
+		LOG("[EGL] swapchain path: leaving CAMetalLayer configuration to the driver");
+	} else if (!MacMetalPresent_Init(metalLayer))
 		LOG_L(L_ERROR, "[EGL] MacMetalPresent_Init failed; window will not show frames");
 
 	return true;
@@ -1135,6 +1161,19 @@ bool PresentFrame()
 	// SDL swap
 	if (eglDpy == EGL_NO_DISPLAY || eglSfc == EGL_NO_SURFACE)
 		return false;
+
+	static const bool useSwapchain = (getenv("SPRING_MAC_SWAPCHAIN") != nullptr);
+	if (useSwapchain && s_haveWindowSurface) {
+		static bool announced = false;
+		if (!announced) { announced = true; LOG("[MacPresent] swapchain present path active (no readback)"); }
+		const EGLBoolean ok = eglSwapBuffers(eglDpy, eglSfc);
+		if (ok != EGL_TRUE) {
+			static unsigned fails = 0;
+			if ((fails++ % 300u) == 0u)
+				LOG_L(L_WARNING, "[MacPresent] eglSwapBuffers failed (egl error 0x%x, %u so far)", eglGetError(), fails);
+		}
+		return ok == EGL_TRUE;
+	}
 
 	// self-heal the borderless-fullscreen frame after async display-mode
 	// restores (see EnforceBorderlessFullscreenFrame): cheap periodic check,
