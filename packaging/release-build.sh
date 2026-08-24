@@ -649,7 +649,7 @@ mkdir -p "$RESOURCES/LICENSES"
 cp "$SRC/COPYING" "$RESOURCES/"
 cp "$PKG/NOTICE" "$RESOURCES/"
 cp "$PKG/LICENSES/MANIFEST.tsv" "$RESOURCES/LICENSES/"
-"$PKG/collect-licenses.sh" "$RESOURCES/LICENSES" || { echo "FATAL: license collection failed"; exit 1; }
+ENGINE_SRC="$SRC" "$PKG/collect-licenses.sh" "$RESOURCES/LICENSES" || { echo "FATAL: license collection failed"; exit 1; }
 cp "$RESOURCES/LICENSES/"*.txt "$PKG/LICENSES/" 2>/dev/null || true
 "$PKG/license-audit.sh" "$APP"
 
