@@ -1,0 +1,41 @@
+diff --git a/src/egl/drivers/dri2/platform_surfaceless.c b/src/egl/drivers/dri2/platform_surfaceless.c
+index b78fa5d1826..ba7b98dc7d3 100644
+--- a/src/egl/drivers/dri2/platform_surfaceless.c
++++ b/src/egl/drivers/dri2/platform_surfaceless.c
+@@ -215,6 +215,12 @@ static const struct dri2_egl_display_vtbl dri2_surfaceless_display_vtbl = {
+ #ifdef __APPLE__
+ /* macOS window surface functions for Kopper/Metal */
+ 
++#if defined(__APPLE__) && defined(VK_USE_PLATFORM_METAL_EXT)
++static void surfaceless_metal_kopper_get_drawable_info(struct dri_drawable *draw,
++                                                       int *w, int *h,
++                                                       void *loaderPrivate);
++#endif
++
+ static _EGLSurface *
+ dri2_surfaceless_create_window_surface(_EGLDisplay *disp, _EGLConfig *conf,
+                                        void *native_window,
+@@ -252,6 +258,23 @@ dri2_surfaceless_create_window_surface(_EGLDisplay *disp, _EGLConfig *conf,
+       goto cleanup_surface;
+    }
+ 
++   /* dri2_init_surface() takes Width/Height from attrib_list, which is empty for a
++    * window surface, so they stay 0 — GL then treats the default framebuffer as
++    * 0x0 and clips every draw against it (clears still land, hence a window that
++    * could be painted red while the scene never appeared). Seed them from the
++    * layer, the same source the kopper loader uses. */
++#if defined(VK_USE_PLATFORM_METAL_EXT)
++   {
++      int lw = 0, lh = 0;
++      surfaceless_metal_kopper_get_drawable_info(dri2_surf->dri_drawable, &lw, &lh,
++                                                 dri2_surf);
++      if (lw > 0 && lh > 0) {
++         dri2_surf->base.Width = lw;
++         dri2_surf->base.Height = lh;
++      }
++   }
++#endif
++
+    fprintf(stderr, "[BARDBG] create_window_surface ok native=%p drawable=%p %dx%d\n",
+            native_window, (void *)dri2_surf->dri_drawable,
+            dri2_surf->base.Width, dri2_surf->base.Height);

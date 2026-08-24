@@ -1,0 +1,34 @@
+diff --git a/src/kosmickrisp/vulkan/kk_encoder.c b/src/kosmickrisp/vulkan/kk_encoder.c
+index a83a906e1a3..efcfbfc5b11 100644
+--- a/src/kosmickrisp/vulkan/kk_encoder.c
++++ b/src/kosmickrisp/vulkan/kk_encoder.c
+@@ -116,6 +116,13 @@ kk_encoder_end(struct kk_cmd_buffer *cmd)
+    upload_queue_writes(cmd);
+    kk_encoder_signal_fence_and_end(cmd);
+ 
++   /* Everything the buffer contains has now been encoded — only now is it safe
++    * to hand the drawable to the compositor (see kk_encoder_signal_fence_and_end). */
++   if (cmd->drawable) {
++      mtl_present_drawable(cmd->encoder->main.cmd_buffer, cmd->drawable);
++      cmd->drawable = NULL;
++   }
++
+    struct kk_encoder *encoder = cmd->encoder;
+    if (encoder->last_signaled_value_pre_gfx != encoder->signal_value_pre_gfx) {
+       mtl_encode_signal_event(encoder->pre_gfx.cmd_buffer, encoder->event,
+@@ -233,10 +240,11 @@ kk_encoder_signal_fence_and_end(struct kk_cmd_buffer *cmd)
+       }
+    }
+ 
+-   if (cmd->drawable) {
+-      mtl_present_drawable(encoder->main.cmd_buffer, cmd->drawable);
+-      cmd->drawable = NULL;
+-   }
++   /* Presenting here is wrong: this function runs on every barrier and encoder
++    * switch, so the first one in the buffer would hand the drawable to the
++    * compositor before the copy that fills it has been encoded — the window
++    * then shows an empty image while the frame is still being assembled.
++    * The present belongs at the very end of the buffer, in kk_encoder_end(). */
+ }
+ 
+ static void

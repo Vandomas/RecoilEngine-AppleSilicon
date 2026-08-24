@@ -87,7 +87,7 @@ endif()
 # libraries listed earlier (gflags, streflop, etc.) that were skipped on first pass.
 # Re-list common libraries so they resolve against GameHeadless.
 if(APPLE)
-	target_link_libraries(engine-headless ${engineCommonLibraries})
+	target_link_libraries(engine-headless ${engineCommonLibraries} fmt::fmt)
 endif()
 
 # Export symbols for plugin access (replaces CMP0065 OLD behavior)

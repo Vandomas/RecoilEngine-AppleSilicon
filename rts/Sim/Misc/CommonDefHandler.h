@@ -15,6 +15,8 @@ public:
 
 	static void AddSoundSetData(GuiSoundSet& soundSet, const std::string& fileName, float volume);
 
+	static void PreloadSoundFile(const std::string& fileName);
+
 	static GuiSoundSetData& GetSoundSetData(size_t idx);
 
 	static size_t SoundSetDataCount();

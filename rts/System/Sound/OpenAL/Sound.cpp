@@ -185,30 +185,44 @@ size_t CSound::GetDefSoundId(const std::string& name)
 
 size_t CSound::GetSoundId(const std::string& name)
 {
-	std::lock_guard<spring::recursive_mutex> lck(soundMutex);
+	SoundItemNameMap itemMap;
 
-	// do not preload-loop forever, erase even if the sound fails to load
-	// note: this breaks the name reference, has to be done when returning
-	// regular GetSoundId calls will pre-empt any preload items
-	if (soundSources.empty())
-		return (preloadSet.erase(name), 0);
+	{
+		std::lock_guard<spring::recursive_mutex> lck(soundMutex);
+
+		// do not preload-loop forever, erase even if the sound fails to load
+		// note: this breaks the name reference, has to be done when returning
+		// regular GetSoundId calls will pre-empt any preload items
+		if (soundSources.empty())
+			return (preloadSet.erase(name), 0);
+
+		const auto soundMapIt = soundMap.find(name);
+		if (soundMapIt != soundMap.end())
+			return (preloadSet.erase(name), soundMapIt->second);
+
+		const auto itemDefIt = soundItemDefsMap.find(StringToLower(name));
+
+		if (itemDefIt != soundItemDefsMap.end()) {
+			itemMap = itemDefIt->second;
+		} else {
+			// name does not match any sounds.lua item, interpret as raw file reference
+			itemMap = defaultItemNameMap;
+			itemMap.erase("file");
+			itemMap.emplace("file", name);
+		}
+	}
+
+	const auto fileIt = itemMap.find("file");
+	const size_t bufferID = (fileIt != itemMap.end())? LoadSoundBuffer(fileIt->second): 0;
+
+	std::lock_guard<spring::recursive_mutex> lck(soundMutex);
 
 	const auto soundMapIt = soundMap.find(name);
 	if (soundMapIt != soundMap.end())
 		return (preloadSet.erase(name), soundMapIt->second);
 
-	const auto itemDefIt = soundItemDefsMap.find(StringToLower(name));
-
-	if (itemDefIt != soundItemDefsMap.end())
-		return (preloadSet.erase(name), MakeItemFromDef(itemDefIt->second));
-
-	// name does not match any sounds.lua item, interpret as raw file reference
-	if (LoadSoundBuffer(name) > 0) {
-		SoundItemNameMap itemMap = defaultItemNameMap;
-		itemMap.erase("file");
-		itemMap.emplace("file", name);
-		return (preloadSet.erase(name), MakeItemFromDef(itemMap));
-	}
+	if (bufferID > 0)
+		return (preloadSet.erase(name), RegisterSoundItem(itemMap, bufferID));
 
 	LOG_L(L_ERROR, "[Sound::%s] could not find sound \"%s\"", __func__, name.c_str());
 	return (preloadSet.erase(name), 0);
@@ -808,13 +822,23 @@ void CSound::UpdateThread(int cfgMaxSounds)
 
 void CSound::Update()
 {
-	std::lock_guard<spring::recursive_mutex> lck(soundMutex);
-
 	// limit consumption-rate to prevent source starvation
-	// lock is held, size can not be changed except by loop
-	for (size_t i = 0, n = std::min(size_t(4), preloadSet.size()); i < n; i++) {
-		GetSoundId(*preloadSet.begin());
+	for (size_t i = 0; i < size_t(4); i++) {
+		std::string name;
+
+		{
+			std::lock_guard<spring::recursive_mutex> lck(soundMutex);
+
+			if (preloadSet.empty())
+				break;
+
+			name = *preloadSet.begin();
+		}
+
+		GetSoundId(name);
 	}
+
+	std::lock_guard<spring::recursive_mutex> lck(soundMutex);
 
 	for (CSoundSource& source: soundSources) {
 		source.Update();
@@ -835,10 +859,16 @@ size_t CSound::MakeItemFromDef(const SoundItemNameMap& itemDef)
 		return 0;
 
 	const size_t bufferID = LoadSoundBuffer(defIt->second);
-	const size_t   itemID = soundItems.size();
 
 	if (bufferID == 0)
 		return 0;
+
+	return (RegisterSoundItem(itemDef, bufferID));
+}
+
+size_t CSound::RegisterSoundItem(const SoundItemNameMap& itemDef, size_t bufferID)
+{
+	const size_t itemID = soundItems.size();
 
 	soundItems.emplace_back(itemID, bufferID, itemDef);
 	soundMap[ soundItems[itemID].Name() ] = itemID;
@@ -984,18 +1014,22 @@ bool CSound::LoadSoundDefsImpl(LuaParser* defsParser)
 // only used internally, locked in caller's scope
 size_t CSound::LoadSoundBuffer(const std::string& path)
 {
-	const size_t id = SoundBuffer::GetId(path);
+	{
+		std::lock_guard<spring::recursive_mutex> lck(soundMutex);
 
-	if (id > 0)
-		return id; // file is loaded already
+		const size_t id = SoundBuffer::GetId(path);
 
-	// do not keep generating AL buffers for files that previously failed to load, etc
-	if (failureSet.find(path) != failureSet.end())
-		return 0;
+		if (id > 0)
+			return id; // file is loaded already
+
+		// do not keep generating AL buffers for files that previously failed to load, etc
+		if (failureSet.find(path) != failureSet.end())
+			return 0;
+	}
 
 	CFileHandler file("", "");
 
-	loadBuffer.clear();
+	std::vector<std::uint8_t> loadBuffer;
 	loadBuffer.reserve(1024 * 1024);
 
 	file.GetBuffer() = std::move(loadBuffer);
@@ -1006,6 +1040,8 @@ size_t CSound::LoadSoundBuffer(const std::string& path)
 
 	if (!file.FileExists()) {
 		LOG_L(L_ERROR, "[%s] unable to open audio file \"%s\"", __func__, path.c_str());
+
+		std::lock_guard<spring::recursive_mutex> lck(soundMutex);
 		failureSet.insert(path);
 		return 0;
 	}
@@ -1031,11 +1067,18 @@ size_t CSound::LoadSoundBuffer(const std::string& path)
 
 	CheckError("[Sound::LoadSoundBuffer]");
 
+	std::lock_guard<spring::recursive_mutex> lck(soundMutex);
+
 	if (soundBuf.GetLength() <= 0.0f) {
 		LOG_L(L_WARNING, "[%s] failed to load file \"%s\"", __func__, path.c_str());
 		failureSet.insert(path);
 		return 0;
 	}
+
+	const size_t id = SoundBuffer::GetId(path);
+
+	if (id > 0)
+		return id;
 
 	return (SoundBuffer::Insert(std::move(soundBuf)));
 }

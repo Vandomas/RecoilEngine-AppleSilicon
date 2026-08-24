@@ -1,0 +1,40 @@
+diff --git a/src/gallium/drivers/zink/zink_kopper.c b/src/gallium/drivers/zink/zink_kopper.c
+index 6afbe268e10..43232072257 100644
+--- a/src/gallium/drivers/zink/zink_kopper.c
++++ b/src/gallium/drivers/zink/zink_kopper.c
+@@ -1069,6 +1069,35 @@ zink_kopper_acquire_readback(struct zink_context *ctx, struct zink_resource *res
+    uint32_t last_dt_idx = res->obj->last_dt_idx;
+    VkResult ret = VK_SUCCESS;
+ 
++   /* KosmicKrisp/Metal: a framebuffer read must never step the swapchain. The
++    * loop at the bottom of this function presents the half-drawn image and then
++    * acquires a different one, so the rest of the frame is rendered into an
++    * image that vkQueuePresentKHR never names — glReadPixels still sees a live
++    * frame (it reads whatever res->obj->image points at now) while the drawable
++    * receives the image that was presented mid-frame. Measured: ~1000 presents
++    * per second against ~150 frames. Gating on images[].age is not enough: age
++    * is only set for images that were already presented, and age_locked can
++    * freeze it. On Metal there is nothing to gain from stepping anyway — the
++    * present path is itself a copy — so always serve reads from the per-image
++    * readback copy. */
++   if (cdt->type == KOPPER_METAL) {
++      if (res->obj->dt_idx == UINT32_MAX &&
++          !zink_kopper_acquire(ctx, res, UINT64_MAX)) {
++         *readback = NULL;
++         return false;
++      }
++      kopper_ensure_readback(screen, res);
++      struct pipe_resource *rb = cdt->swapchain->images[res->obj->dt_idx].readback;
++      if (rb) {
++         if (cdt->swapchain->images[res->obj->dt_idx].readback_needs_update)
++            zink_kopper_readback_update(ctx, res);
++         *readback = zink_resource(rb);
++      } else {
++         *readback = res;
++      }
++      return false;
++   }
++
+    if (++cdt->readback_counter >= ZINK_READBACK_THRESHOLD) {
+       if (kopper_ensure_readback(screen, res) &&
+           res->obj->dt_idx != UINT32_MAX && cswap->images[res->obj->dt_idx].readback_needs_update)

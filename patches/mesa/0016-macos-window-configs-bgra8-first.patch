@@ -1,0 +1,60 @@
+diff --git a/src/egl/drivers/dri2/platform_surfaceless.c b/src/egl/drivers/dri2/platform_surfaceless.c
+index 8dd769c1e88..b78fa5d1826 100644
+--- a/src/egl/drivers/dri2/platform_surfaceless.c
++++ b/src/egl/drivers/dri2/platform_surfaceless.c
+@@ -37,6 +37,7 @@
+ #include "dri_screen.h"
+ #include "dri_util.h"
+ #include "egl_dri2.h"
++#include "util/format/u_format.h"
+ #include "eglglobals.h"
+ #include "kopper_interface.h"
+ #include "loader.h"
+@@ -804,20 +805,41 @@ dri2_initialize_surfaceless(_EGLDisplay *disp)
+ #endif
+    dri2_set_WL_bind_wayland_display(disp);
+ 
+-   dri2_add_pbuffer_configs_for_visuals(disp);
+-
+ #ifdef __APPLE__
+-   /* On macOS, also add window configs when kopper is enabled so that
+-    * window surfaces can be created via the kopper/Metal presentation path.
+-    */
++   /* Register window-capable configs BEFORE the pbuffer pass, and only for the
++    * formats a Metal surface can actually present (wsi_common_metal.c exposes
++    * B8G8R8A8_UNORM/SRGB and a couple of 10/16-bit float ones).
++    *
++    * Two reasons this must not simply re-add every driver config afterwards:
++    * dri2_add_config() discards a config whose dri_config[db][srgb] slot is
++    * already taken, so a later pass never sets EGL_WINDOW_BIT on the 8-bit
++    * configs at all; and passing attr_list == NULL drops the
++    * EGL_CONFIG_SELECT_GROUP_EXT demotion that dri2_add_pbuffer_configs_for_visuals()
++    * gives 16-bit-per-channel configs, after which _eglCompareConfigs() prefers
++    * them for having more colour bits — eglChooseConfig(RGBA=8) then hands the
++    * application an R16G16B16A16_UNORM config and CreateSwapchainKHR fails with
++    * VK_ERROR_FORMAT_NOT_SUPPORTED. */
+    if (dri2_dpy->kopper) {
++      static const EGLint attr_list[] = {
++         EGL_CONFIG_SELECT_GROUP_EXT, 0, EGL_NONE,
++      };
+       for (unsigned i = 0; dri2_dpy->driver_configs[i] != NULL; i++) {
++         const struct gl_config *cfg =
++            (const struct gl_config *)dri2_dpy->driver_configs[i];
++         enum pipe_format linear = util_format_linear(cfg->color_format);
++
++         if (linear != PIPE_FORMAT_BGRA8888_UNORM &&
++             linear != PIPE_FORMAT_BGRX8888_UNORM)
++            continue;
++
+          dri2_add_config(disp, dri2_dpy->driver_configs[i],
+-                         EGL_WINDOW_BIT | EGL_PBUFFER_BIT, NULL);
++                         EGL_WINDOW_BIT | EGL_PBUFFER_BIT, attr_list);
+       }
+    }
+ #endif
+ 
++   dri2_add_pbuffer_configs_for_visuals(disp);
++
+    /* Fill vtbl last to prevent accidentally calling virtual function during
+     * initialization.
+     */

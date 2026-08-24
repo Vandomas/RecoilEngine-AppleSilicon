@@ -335,6 +335,10 @@ else   (UNIX)
 	include_directories("${COREFOUNDATION_LIBRARY}/Headers")
 endif  (WIN32)
 
+if    (APPLE)
+	include_directories(BEFORE "${CMAKE_CURRENT_SOURCE_DIR}/rts/lib/fmt/include")
+endif (APPLE)
+
 option(USE_VALGRIND "Try to support Valgrind" FALSE)
 if    (USE_VALGRIND)
 	find_package(Valgrind)

@@ -1,0 +1,24 @@
+diff --git a/src/vulkan/wsi/wsi_common_metal.c b/src/vulkan/wsi/wsi_common_metal.c
+index 1e2e6f264ac..1cdf64ef135 100644
+--- a/src/vulkan/wsi/wsi_common_metal.c
++++ b/src/vulkan/wsi/wsi_common_metal.c
+@@ -12,6 +12,7 @@
+ #include "util/u_vector.h"
+ 
+ #include "wsi_common_entrypoints.h"
++#include <strings.h>
+ #include "wsi_common_private.h"
+ #include "wsi_common_metal_layer.h"
+ 
+@@ -869,7 +870,10 @@ wsi_metal_create_mem(const struct wsi_swapchain *chain,
+       .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+       .pNext = &image_mem_dedicated_info,
+       .allocationSize = requirements.size,
+-      .memoryTypeIndex = requirements.memoryTypeBits,
++      /* memoryTypeIndex is an index, memoryTypeBits is a mask of allowed indices;
++       * passing the mask allocates from whatever type that number happens to name.
++       * Take the lowest allowed type instead. */
++      .memoryTypeIndex = (uint32_t)(ffs(requirements.memoryTypeBits) - 1),
+    };
+ 
+    return wsi->AllocateMemory(chain->device, &image_mem_info,

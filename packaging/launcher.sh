@@ -482,6 +482,11 @@ I hope online play can be enabled very soon." || true
   trap - PIPE   # back to default before the engine exec below
 fi
 
+pkill -f "wrapper-bridge --write-dir" 2>/dev/null || true
+if [ -x "$HERE/wrapper-bridge" ]; then
+  "$HERE/wrapper-bridge" --write-dir "$WRITEDIR" --pr-downloader "$HERE/pr-downloader" >> "$WRITEDIR/wrapper-bridge.log" 2>&1 &
+fi
+
 # The engine is the point of the whole exercise — if it is missing or cannot
 # be exec'd the launcher must SAY so, not vanish with a silent exit 127.
 if [ ! -x "$HERE/spring" ]; then
