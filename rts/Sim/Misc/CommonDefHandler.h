@@ -15,6 +15,7 @@ public:
 
 	static void AddSoundSetData(GuiSoundSet& soundSet, const std::string& fileName, float volume);
 
+	// queues a soundfile for background preload, resolves names like LoadSoundFile
 	static void PreloadSoundFile(const std::string& fileName);
 
 	static GuiSoundSetData& GetSoundSetData(size_t idx);

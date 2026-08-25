@@ -54,8 +54,9 @@ void CommonDefHandler::PreloadSoundFile(const std::string& fileName)
 
 	const bool foundExt = (std::find(soundExts.cbegin(), soundExts.cend(), soundExt) != soundExts.cend());
 	const bool haveFile = (foundExt && CFileHandler::FileExists(fileName, SPRING_VFS_RAW_FIRST));
+	const bool haveItem = (haveFile || sound->HasSoundItem(fileName));
 
-	if (haveFile || sound->HasSoundItem(fileName)) {
+	if (haveItem) {
 		sound->PreloadSoundItem(fileName);
 		return;
 	}
