@@ -61,5 +61,6 @@ progress-window	BAR macOS port (first-run progress UI)	GPL-2.0-or-later	Part of 
 error-dialog	BAR macOS port (error dialog UI)	GPL-2.0-or-later	Part of this project; source in packaging/
 consent-dialog	BAR macOS port (first-run consent UI)	GPL-2.0-or-later	Part of this project; source in packaging/
 message-check	BAR macOS port (remote message/kill-switch UI)	GPL-2.0-or-later	Part of this project; source in packaging/
+wrapper-bridge	BAR macOS port (spring-launcher loopback bridge)	GPL-2.0-or-later	Part of this project; source in packaging/
 libAIInterface.dylib	C AI Interface (engine tree)	GPL-2.0-or-later	Same as spring
 libSkirmishAI.dylib	Skirmish AIs: BARb (CircuitAI fork, GPL-2.0) + NullAI (engine tree); BARb statically vendors AngelScript (Zlib)	GPL-2.0	Source: engine fork repo + BARb submodule branch macos-arm64; AngelScript attribution via Zlib.txt
