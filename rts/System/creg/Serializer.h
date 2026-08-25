@@ -171,6 +171,11 @@ namespace creg {
 		/** @see ISerializer::SerializeObjectInstance */
 		void SerializeObjectInstance(void* inst, Class* cls);
 
+		/** Peek the class of the embedded object instance that the next
+		 * SerializeObjectInstance call would read, without consuming any
+		 * stream data. Returns nullptr for an absent (id 0) object. */
+		Class* PeekObjectInstanceClass();
+
 		/** @see ISerializer::Serialize */
 		void Serialize(void* data, int byteSize);
 

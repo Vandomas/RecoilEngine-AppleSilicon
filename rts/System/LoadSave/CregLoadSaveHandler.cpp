@@ -112,6 +112,15 @@ void CGameStateCollector::Serialize(creg::ISerializer* s)
 	mapType->Serialize(s, &CSplitLuaHandle::gameParams);
 
 	s->SerializeObjectInstance(CUnitDrawer::modelDrawerData->GetSavedData(), CUnitDrawer::modelDrawerData->GetSavedData()->GetClass());
+	// the decal drawer is polymorphic on the GroundDecals setting; if the
+	// save was written in the other mode, re-create the matching drawer
+	// before reading its state, otherwise the stream desyncs (the file
+	// already names the drawer class, so no extra data is needed)
+	if (!s->IsWriting()) {
+		creg::Class* fileCls = static_cast<creg::CInputStreamSerializer*>(s)->PeekObjectInstanceClass();
+		if (fileCls != nullptr && fileCls != groundDecals->GetClass())
+			IGroundDecalDrawer::SetDrawDecals(!IGroundDecalDrawer::GetDrawDecals());
+	}
 	s->SerializeObjectInstance(groundDecals, groundDecals->GetClass());
 }
 
@@ -388,12 +397,19 @@ void CCregLoadSaveHandler::LoadGame()
 		void* pGSC = nullptr;
 		creg::Class* gsccls = nullptr;
 
+		// reading the decal drawer may temporarily switch it to the mode the
+		// save was written in (see CGameStateCollector::Serialize); remember
+		// the user's setting and restore it once the state has been read
+		const bool userDrawDecals = IGroundDecalDrawer::GetDrawDecals();
+
 		inputStream.LoadPackage(&iss, pGSC, gsccls);
 		assert(pGSC && gsccls == CGameStateCollector::StaticClass());
 
 		// the only job of gsc is to collect gamestate data
 		CGameStateCollector* gsc = static_cast<CGameStateCollector*>(pGSC);
 		spring::SafeDelete(gsc);
+
+		IGroundDecalDrawer::SetDrawDecals(userDrawDecals);
 	}
 
 	LEAVE_SYNCED_CODE();

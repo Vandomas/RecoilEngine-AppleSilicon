@@ -516,6 +516,19 @@ void CInputStreamSerializer::SerializeObjectInstance(void* inst, creg::Class* cl
 	SerializeObject(cls, inst);
 }
 
+creg::Class* CInputStreamSerializer::PeekObjectInstanceClass()
+{
+	const std::streampos pos = stream->tellg();
+	unsigned int id;
+	ReadVarSizeUInt(stream, &id);
+	stream->seekg(pos);
+
+	if (id == 0 || id >= objects.size())
+		return nullptr;
+
+	return classRefs[objects[id].classRef];
+}
+
 void CInputStreamSerializer::AddPostLoadCallback(void (*cb)(void*), void* ud)
 {
 	PostLoadCallback plcb;
