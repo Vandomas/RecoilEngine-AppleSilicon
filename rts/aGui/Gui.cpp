@@ -4,6 +4,7 @@
 #include "Gui.h"
 
 #include <SDL_events.h>
+#include <cmath>
 
 #include "GuiElement.h"
 #include "Rendering/GlobalRendering.h"
@@ -120,10 +121,27 @@ bool Gui::MouseOverElement(const GuiElement* elem, int x, int y) const
 
 bool Gui::HandleEvent(const SDL_Event& ev)
 {
+	SDL_Event event = ev;
+#ifdef __APPLE__
+	if (event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) {
+		int winW = 1, winH = 1;
+		if (globalRendering->sdlWindow != nullptr)
+			SDL_GetWindowSize(globalRendering->sdlWindow, &winW, &winH);
+		const double sx = (winW > 1)? double(globalRendering->viewSizeX - 1) / double(winW - 1): 1.0;
+		const double sy = (winH > 1)? double(globalRendering->viewSizeY - 1) / double(winH - 1): 1.0;
+		if (event.type == SDL_MOUSEMOTION) {
+			event.motion.x = int(std::lround(event.motion.x * sx));
+			event.motion.y = int(std::lround(event.motion.y * sy));
+		} else {
+			event.button.x = int(std::lround(event.button.x * sx));
+			event.button.y = int(std::lround(event.button.y * sy));
+		}
+	}
+#endif
 	ElList::iterator handler = elements.end();
 	for (ElList::iterator it = elements.begin(); it != elements.end(); ++it)
 	{
-		if (it->element->HandleEvent(ev))
+		if (it->element->HandleEvent(event))
 		{
 			handler = it;
 			break;
