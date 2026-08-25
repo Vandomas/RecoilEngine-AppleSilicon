@@ -1038,7 +1038,7 @@ void CGame::KillSimulation()
 	LOG("[Game::%s][1]", __func__);
 
 	// a failed load leaves half-initialized objects behind, freeing them crashes
-	if (spring::exitCode == spring::EXIT_CODE_NOLOAD) {
+	if (spring::exitCode == spring::EXIT_CODE_NOLOAD && gu->globalQuit) {
 		LOG_L(L_WARNING, "[Game::%s] simulation never finished loading, leaking it", __func__);
 		return;
 	}
