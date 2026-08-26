@@ -482,6 +482,10 @@ I hope online play can be enabled very soon." || true
   trap - PIPE   # back to default before the engine exec below
 fi
 
+# Spring-launcher wrapper bridge: implements the loopback protocol BYAR-Chobby
+# expects from its launcher (replay list metadata, "resource" downloads such as
+# the widget hub). It watches our PID (which exec below turns into the engine)
+# and exits when the session ends.
 pkill -f "wrapper-bridge --write-dir" 2>/dev/null || true
 if [ -x "$HERE/wrapper-bridge" ]; then
   "$HERE/wrapper-bridge" --write-dir "$WRITEDIR" --pr-downloader "$HERE/pr-downloader" >> "$WRITEDIR/wrapper-bridge.log" 2>&1 &
@@ -493,13 +497,25 @@ if [ ! -x "$HERE/spring" ]; then
   fail_dialog "The game engine is missing from the app bundle. The download may have been interrupted — please re-download the game and drag it to Applications again."
   exit 1
 fi
-# execfail: a failed exec (kernel refused the binary: bad arch, quarantine,
-# corrupt file) returns control here instead of silently killing the shell.
-shopt -s execfail 2>/dev/null || true
 # BAR_INFOLOG lets the engine's error dialog (Platform::MsgBox) attach the
 # full this-session log to any fatal it shows.
-SPRING_DATADIR="$RES" BAR_INFOLOG="$WRITEDIR/infolog.txt" \
-BAR_PORT_VERSION="$PORT_VERSION" \
-  exec "$HERE/spring" --write-dir "$WRITEDIR" --menu "$LOBBY_RAPID" "$@"
-fail_dialog "The game engine could not be started (macOS refused to run it). Please re-download the game; if this keeps happening, report it with the log at: $WRITEDIR/first-run-download.log"
-exit 1
+export SPRING_DATADIR="$RES" BAR_INFOLOG="$WRITEDIR/infolog.txt" BAR_PORT_VERSION="$PORT_VERSION"
+while :; do
+  T0=$SECONDS
+  "$HERE/spring" --write-dir "$WRITEDIR" --menu "$LOBBY_RAPID" "$@"
+  RC=$?
+  case "$RC" in
+    # a failed exec (kernel refused the binary: bad arch, quarantine, corrupt file)
+    126|127)
+      fail_dialog "The game engine could not be started (macOS refused to run it). Please re-download the game; if this keeps happening, report it with the log at: $WRITEDIR/first-run-download.log"
+      exit 1;;
+    # engine error exits, mod 256: CRASHED/-1003 -> 21, NOLOAD/1002 -> 234,
+    # BADSAVE/1004 -> 236. The menu dies with the process on these (a failed
+    # savegame load quits the whole engine) — bring it back up.
+    21|234|236) ;;
+    *) exit "$RC";;
+  esac
+  # only resurrect sessions that got past startup, a menu that fails to boot
+  # must not dialog-loop forever
+  [ $((SECONDS - T0)) -ge 20 ] || exit "$RC"
+done
