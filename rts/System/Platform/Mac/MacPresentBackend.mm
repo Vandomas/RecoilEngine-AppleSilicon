@@ -44,6 +44,10 @@
 
 CONFIG(int, MacPresentDirect).defaultValue(1).minimumValue(0).maximumValue(1).description("macOS: present shader reads the readback ring directly from unified memory (0 = IOSurface staging path). Runtime-changeable so perf A/B legs can share one seeked process.");
 
+CONFIG(int, MacPresentSwapchain).defaultValue(0).minimumValue(0).maximumValue(1).readOnly(true).description("macOS: present through the driver-owned swapchain instead of readback and Metal blit. Latched at context creation.");
+
+CONFIG(float, MacRenderScale).defaultValue(0.0f).minimumValue(0.0f).maximumValue(4.0f).description("macOS: render resolution in pixels per point. 0 keeps the backing scale, anything else is clamped between 1.0 and it.");
+
 // A truly zero-copy present (render the engine FBO directly into the
 // IOSurface that Metal samples — no readback at all) is blocked on Mesa
 // upstream work: KosmicKrisp's VK_EXT_external_memory_metal needs to grow
@@ -155,6 +159,7 @@ void* AttachMetalLayer(SDL_Window* window)
 			if (win != nil)
 				[layer setContentsScale:[win backingScaleFactor]];
 
+			// assign the layer first, or AppKit re-derives opaque from NSView.isOpaque
 			[view setLayer:layer];
 			[view setWantsLayer:YES];
 			return (void*)layer;
@@ -325,9 +330,14 @@ bool CreateContext(SDL_Window* window)
 	// On macOS with Mesa-surfaceless EGL, EGL_WINDOW_BIT is unsupported.
 	// The actual presentation happens via the CAMetalLayer + KosmicKrisp WSI
 	// (Vulkan -> Metal), so we only need a pbuffer-capable config here.
-	const bool wantSwapchainCfg = (getenv("SPRING_MAC_SWAPCHAIN") != nullptr);
+	// latched here, the EGL surface type below depends on it
+	bool wantSwapchainCfg = (configHandler != nullptr && configHandler->GetInt("MacPresentSwapchain") != 0);
+	if (const char* s = getenv("SPRING_MAC_SWAPCHAIN"))
+		wantSwapchainCfg = (atoi(s) != 0);
+
 	if (wantSwapchainCfg) {
-		setenv("ZINK_DEBUG", "norp", 0);
+		// screen reads come from the live image, one copy per frame less
+		setenv("BARDBG_DIRECT_READ", "1", 0);
 	}
 	EGLint configAttribs[] = {
 		EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
@@ -405,6 +415,7 @@ bool CreateContext(SDL_Window* window)
 		    "backing scale (%.2f), panel and GPU core count",
 		    pxW, pxH, (pxW * (double)pxH) / 1.0e6, winW, winH, bsfTrue);
 
+	// the driver sizes its swapchain from the layer, so size the layer first
 	if (wantSwapchainCfg && nativeView != nullptr) {
 		CAMetalLayer* swapLayer = (CAMetalLayer*)nativeView;
 		NSWindow* nsw = NSWindowFor(window);
@@ -416,8 +427,10 @@ bool CreateContext(SDL_Window* window)
 		    pbufW, pbufH, swapLayer.frame.size.width, swapLayer.frame.size.height);
 	}
 
+	// window surface only on the swapchain path, BGRA configs also carry EGL_PBUFFER_BIT
 	if (wantSwapchainCfg && nativeView) {
 		eglSfc = eglCreateWindowSurface(eglDpy, chosenConfig, (EGLNativeWindowType)nativeView, NULL);
+		// on success the driver owns the swapchain and the readback present is unused
 		s_haveWindowSurface = (eglSfc != EGL_NO_SURFACE);
 		LOG("[EGL] window surface: %s", s_haveWindowSurface ? "created (swapchain available)" : "unavailable, using pbuffer");
 	}
@@ -499,9 +512,10 @@ bool CreateContext(SDL_Window* window)
 
 	EGLBoolean mcOk = eglMakeCurrent(eglDpy, eglSfc, eglSfc, eglCtx);
 	if (mcOk == EGL_TRUE && wantSwapchainCfg) {
-		const bool wantVsync = (getenv("SPRING_MAC_VSYNC") != nullptr);
-		eglSwapInterval(eglDpy, wantVsync ? 1 : 0);
-		LOG("[EGL] swapchain present interval: %d", wantVsync ? 1 : 0);
+		// SDL's swap interval does not reach this surface, and EGL has no adaptive mode
+		const int vsync = (configHandler != nullptr) ? std::abs(configHandler->GetInt("VSync")) : 0;
+		eglSwapInterval(eglDpy, vsync);
+		LOG("[EGL] swapchain present interval: %d", vsync);
 	}
 	MAC_DLOG("[EGL] eglMakeCurrent -> %d (lastError=0x%x)\n", (int)mcOk, eglGetError());
 	if (!mcOk)
@@ -536,6 +550,7 @@ bool CreateContext(SDL_Window* window)
 	}
 
 	// Set up the manual present path now that the layer + context exist.
+	// the driver owns the layer on this path, leave its device and scale alone
 	if (wantSwapchainCfg) {
 		LOG("[EGL] swapchain path: leaving CAMetalLayer configuration to the driver");
 	} else if (!MacMetalPresent_Init(metalLayer))
@@ -626,6 +641,13 @@ double EffectiveBackingScale(SDL_Window* window)
 		return 1.0;
 
 	const double bsf = BackingScaleFactor(window);
+
+	// clamped between logical resolution and the true backing scale
+	if (configHandler != nullptr) {
+		const double scale = configHandler->GetFloat("MacRenderScale");
+		if (scale > 0.0)
+			return std::clamp(scale, 1.0, bsf);
+	}
 
 	if (getenv("SPRING_MAC_FULL_BACKING") != nullptr)
 		return bsf;
@@ -1162,17 +1184,41 @@ bool PresentFrame()
 	if (eglDpy == EGL_NO_DISPLAY || eglSfc == EGL_NO_SURFACE)
 		return false;
 
-	static const bool useSwapchain = (getenv("SPRING_MAC_SWAPCHAIN") != nullptr);
-	if (useSwapchain && s_haveWindowSurface) {
+	// fps over 300 presents, so A/B runs can be read from the log alone
+#ifdef SPRING_MAC_DIAGNOSTICS
+	static const bool fpsLog = (getenv("SPRING_MAC_FPSLOG") != nullptr);
+	if (fpsLog) {
+		static unsigned frames = 0;
+		static double t0 = 0.0;
+		const double now = CFAbsoluteTimeGetCurrent();
+		if (t0 == 0.0) t0 = now;
+		if (++frames >= 300) {
+			const double dt = now - t0;
+			if (dt > 0.0)
+				fprintf(stderr, "[MacPresent/bench] %.1f fps over %u frames (%.2fs)\n",
+				        frames / dt, frames, dt);
+			frames = 0; t0 = now;
+		}
+	}
+#endif
+
+	// Driver-owned swapchain present: the readback machinery below only exists
+	// because a pbuffer has nowhere to present to.
+	if (s_haveWindowSurface) {
 		static bool announced = false;
-		if (!announced) { announced = true; LOG("[MacPresent] swapchain present path active (no readback)"); }
+		if (!announced) {
+			announced = true;
+			LOG("[MacPresent] swapchain present path active (no readback)");
+		}
+
 		const EGLBoolean ok = eglSwapBuffers(eglDpy, eglSfc);
 		if (ok != EGL_TRUE) {
 			static unsigned fails = 0;
 			if ((fails++ % 300u) == 0u)
 				LOG_L(L_WARNING, "[MacPresent] eglSwapBuffers failed (egl error 0x%x, %u so far)", eglGetError(), fails);
 		}
-		return ok == EGL_TRUE;
+
+		return (ok == EGL_TRUE);
 	}
 
 	// self-heal the borderless-fullscreen frame after async display-mode
