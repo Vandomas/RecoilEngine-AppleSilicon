@@ -10,6 +10,7 @@ libEGL*.dylib	Mesa (Zink)	MIT	License text shipped
 libgallium*.dylib	Mesa (Zink + gallium)	MIT	License text shipped
 libvulkan_kosmickrisp.dylib	Mesa (KosmicKrisp; LunarG/Google)	MIT	License text shipped
 libvulkan.1.dylib	Khronos Vulkan-Loader	Apache-2.0	License text shipped
+libMoltenVK.dylib	MoltenVK (Khronos)	Apache-2.0	License text shipped
 libGLESv*.dylib	Mesa	MIT	License text shipped
 libSDL2*.dylib	SDL2	Zlib	License text shipped
 libopenal*.dylib	openal-soft	LGPL-2.1-or-later	DYNAMIC link only (never static); text shipped; relink rights stated in NOTICE

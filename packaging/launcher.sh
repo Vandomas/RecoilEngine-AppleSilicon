@@ -72,10 +72,43 @@ echo $$ > "$LOCK/pid"
 mkdir -p "$WRITEDIR/pool" "$WRITEDIR/cache"
 { tmutil addexclusion "$WRITEDIR/pool" "$WRITEDIR/cache" >/dev/null 2>&1 || true; } &
 
-ICD="$RES/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json"
+# KosmicKrisp needs Metal 4, which only exists on macOS 26. BAR_VULKAN_DRIVER=kk|mvk overrides.
+KK_ICD="$RES/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json"
+MVK_ICD="$RES/vulkan/icd.d/moltenvk_icd.json"
+OS_MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
+
+case "${BAR_VULKAN_DRIVER:-}" in
+  kk)  ICD="$KK_ICD" ;;
+  mvk) ICD="$MVK_ICD" ;;
+  *)
+    if [ "${OS_MAJOR:-0}" -ge 26 ] && [ -f "$KK_ICD" ]; then
+      ICD="$KK_ICD"
+    else
+      ICD="$MVK_ICD"
+    fi
+    ;;
+esac
+
+if [ ! -f "$ICD" ]; then
+  for alt in "$KK_ICD" "$MVK_ICD"; do
+    [ -f "$alt" ] && { ICD="$alt"; break; }
+  done
+fi
+
 if [ ! -f "$ICD" ]; then
   fail_dialog "The application bundle is incomplete (graphics driver missing). Please re-download the game and drag it to Applications again."
   exit 1
+fi
+echo "vulkan driver: $(basename "$ICD") (macOS $OS_MAJOR)" >> "$WRITEDIR/launcher.log" 2>/dev/null || true
+
+# MoltenVK ignores GL_COLOR_LOGIC_OP, so the inverted selection box draws solid.
+CTRLPANEL="$WRITEDIR/LuaUI/ctrlpanel.txt"
+mkdir -p "$WRITEDIR/LuaUI"
+if [ "$ICD" = "$MVK_ICD" ] && [ -f "$RES/LuaUI/ctrlpanel.txt" ]; then
+  grep -v "^invcolorselect" "$RES/LuaUI/ctrlpanel.txt" > "$CTRLPANEL"
+  echo "invcolorselect 0" >> "$CTRLPANEL"
+else
+  rm -f "$CTRLPANEL"
 fi
 
 export EGL_PLATFORM=surfaceless
