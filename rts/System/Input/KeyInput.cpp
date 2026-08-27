@@ -11,6 +11,11 @@
 #include <SDL_stdinc.h>
 
 #include "KeyInput.h"
+#ifdef __APPLE__
+#include "System/Config/ConfigHandler.h"
+
+CONFIG(bool, MacCmdActsAsAlt).defaultValue(true).description("macOS: count the physical Cmd key as Alt as well, so bindings that use the key next to the space bar match a PC keyboard.");
+#endif
 
 /**
 * @brief keys
@@ -120,6 +125,12 @@ namespace KeyInput {
 		const uint8_t* kbState = SDL_GetKeyboardState(&numKeys);
 
 		keyMods = SDL_GetModState();
+
+#ifdef __APPLE__
+		// the key next to the space bar is Alt on a PC keyboard, Cmd on a Mac one
+		if ((keyMods & KMOD_GUI) != 0 && configHandler != nullptr && configHandler->GetBool("MacCmdActsAsAlt"))
+			keyMods = (SDL_Keymod)(keyMods | KMOD_LALT);
+#endif
 
 		keyVec.clear();
 		keyVec.reserve(numKeys);
