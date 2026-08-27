@@ -185,6 +185,9 @@ DESTDIR="$STAGE" ninja -C build-native install
 
 # relocate the neutral prefix tree into the real install location
 test -d "$STAGE$NEUTRAL_PREFIX" || { echo "FATAL: staged install missing $STAGE$NEUTRAL_PREFIX"; exit 1; }
+# wipe the old install first: a driver dropped from the build (MESA_VULKAN_DRIVER=none)
+# would otherwise linger in the prefix and still be picked up by the bundle
+rm -rf "$MESA_PREFIX"/lib "$MESA_PREFIX"/share "$MESA_PREFIX"/include
 mkdir -p "$MESA_PREFIX"
 (cd "$STAGE$NEUTRAL_PREFIX" && tar cf - .) | (cd "$MESA_PREFIX" && tar xf -)
 rm -rf "$STAGE"
