@@ -3205,6 +3205,7 @@ bool CLuaHandle::KeyPress(int keyCode, int scanCode, bool isRepeat)
 	lua_pushinteger(L, SDL21_keysyms(keyCode));
 
 	bool ctrlMod = !!KeyInput::GetKeyModState(KMOD_CTRL);
+	bool altMod  = !!KeyInput::GetKeyModState(KMOD_ALT);
 #if defined(__APPLE__)
 	// macOS clipboard idiom: Cmd + C/V/X/A/Z is copy/paste/cut/select-all/
 	// undo. Game UIs (Chobby edit boxes, in-game chat) check the ctrl
@@ -3216,13 +3217,15 @@ bool CLuaHandle::KeyPress(int keyCode, int scanCode, bool isRepeat)
 	if (!ctrlMod && ((SDL_GetModState() & KMOD_GUI) != 0)) {
 		switch (keyCode) {
 			case SDLK_c: case SDLK_v: case SDLK_x: case SDLK_a: case SDLK_z:
+				// MacCmdActsAsAlt also raises alt, and a UI waiting for plain ctrl drops ctrl+alt
+				altMod = false;
 				ctrlMod = true; break;
 			default: break;
 		}
 	}
 #endif
 	lua_createtable(L, 0, 4);
-	LuaPushNamedBool(L, "alt",   !!KeyInput::GetKeyModState(KMOD_ALT));
+	LuaPushNamedBool(L, "alt",   altMod);
 	LuaPushNamedBool(L, "ctrl",  ctrlMod);
 	LuaPushNamedBool(L, "meta",  !!KeyInput::GetKeyModState(KMOD_GUI));
 	LuaPushNamedBool(L, "shift", !!KeyInput::GetKeyModState(KMOD_SHIFT));
@@ -3285,6 +3288,7 @@ bool CLuaHandle::KeyRelease(int keyCode, int scanCode)
 	lua_pushinteger(L, SDL21_keysyms(keyCode));
 
 	bool ctrlMod = !!KeyInput::GetKeyModState(KMOD_CTRL);
+	bool altMod  = !!KeyInput::GetKeyModState(KMOD_ALT);
 #if defined(__APPLE__)
 	// macOS clipboard idiom: Cmd + C/V/X/A/Z is copy/paste/cut/select-all/
 	// undo. Game UIs (Chobby edit boxes, in-game chat) check the ctrl
@@ -3296,13 +3300,15 @@ bool CLuaHandle::KeyRelease(int keyCode, int scanCode)
 	if (!ctrlMod && ((SDL_GetModState() & KMOD_GUI) != 0)) {
 		switch (keyCode) {
 			case SDLK_c: case SDLK_v: case SDLK_x: case SDLK_a: case SDLK_z:
+				// MacCmdActsAsAlt also raises alt, and a UI waiting for plain ctrl drops ctrl+alt
+				altMod = false;
 				ctrlMod = true; break;
 			default: break;
 		}
 	}
 #endif
 	lua_createtable(L, 0, 4);
-	LuaPushNamedBool(L, "alt",   !!KeyInput::GetKeyModState(KMOD_ALT));
+	LuaPushNamedBool(L, "alt",   altMod);
 	LuaPushNamedBool(L, "ctrl",  ctrlMod);
 	LuaPushNamedBool(L, "meta",  !!KeyInput::GetKeyModState(KMOD_GUI));
 	LuaPushNamedBool(L, "shift", !!KeyInput::GetKeyModState(KMOD_SHIFT));
