@@ -213,9 +213,7 @@ func handleDownload(_ fd: Int32, _ cmd: [String: Any]) {
    sendMsg(fd, "DownloadFinished", ["name": name, "isSuccess": false, "isAborted": false])
 }
 
-// The lobby only asks for folders inside the write dir: the dir itself, demos/,
-// LuaUI/Widgets. Anything else is refused rather than handed to /usr/bin/open,
-// which would launch whatever the path points at.
+// only folders inside the write dir, /usr/bin/open would launch anything else
 func openInFinder(_ raw: String) {
    let path = raw.hasPrefix("file://") ? (URL(string: raw)?.path ?? "") : raw
    guard !path.isEmpty else { return }
@@ -225,7 +223,7 @@ func openInFinder(_ raw: String) {
       log("refusing to open \(target), outside the write dir")
       return
    }
-   // a folder the user has not filled yet does not exist, and open would fail on it
+   // an empty demos/ does not exist yet and open would fail on it
    try? FileManager.default.createDirectory(atPath: target, withIntermediateDirectories: true)
    let proc = Process()
    proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
