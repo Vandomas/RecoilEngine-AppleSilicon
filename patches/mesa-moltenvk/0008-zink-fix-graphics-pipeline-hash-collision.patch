@@ -1,0 +1,83 @@
+From 3397ce537ff3fb00b996d8e20d51e6da64f8b826 Mon Sep 17 00:00:00 2001
+From: Frank Binns <frank.binns@imgtec.com>
+Date: Wed, 22 Jul 2026 06:45:45 +0100
+Subject: [PATCH] zink: fix graphics pipeline hash collision
+
+The blend (in the case of no full DS3 support) and vertex elements state object
+hashes are taken into account when computing the final hash used to cache &
+lookup graphics pipelines in zink_get_gfx_pipeline(). The state objects are
+also cached in the CSO cache.
+
+The lifetimes of the blend and vertex elements state objects aren't tied to the
+cached graphics pipelines. As a result, it's possible for these objects to be
+freed from the CSO cache without the related graphics pipeline being removed and
+freed from the cache in Zink. As objects can be freed from the CSO cache in
+response to a new one being inserted, it's possible for an object to be freed
+and for a new object to immediately be allocated with exactly the same pointer
+value.
+
+Receiving back the same pointer value is very bad, as it's the blend and vertex
+element state object pointers that are used to generate their hashes. The
+consequence of this is that this makes it possible to generate an identical
+graphics pipeline hash for an existing pipeline in the cache even though the
+blend and/or vertex elements state is different to what was used when creating
+the pipeline in the first place.
+
+Fix this by hashing the blend and vertex elements state data rather than their
+pointers.
+
+Fixes the following flakes with Zink+PVR:
+dEQP-GLES3.functional.fragment_ops.blend.*
+dEQP-GLES3.functional.fragment_ops.random.*
+
+Note, this issue can easily be reproduced with the above tests by changing the
+CSO cache max size from 4096 to 0 in cso_cache_init().
+
+Backport-to: *
+Signed-off-by: Frank Binns <frank.binns@imgtec.com>
+---
+ src/gallium/drivers/zink/zink_state.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/gallium/drivers/zink/zink_state.c b/src/gallium/drivers/zink/zink_state.c
+index 6d3e33bc1fe..628fa0077a8 100644
+--- a/src/gallium/drivers/zink/zink_state.c
++++ b/src/gallium/drivers/zink/zink_state.c
+@@ -46,7 +46,6 @@ zink_create_vertex_elements_state(struct pipe_context *pctx,
+    struct zink_vertex_elements_state *ves = CALLOC_STRUCT(zink_vertex_elements_state);
+    if (!ves)
+       return NULL;
+-   ves->hw_state.hash = _mesa_hash_pointer(ves);
+ 
+    int buffer_map[PIPE_MAX_ATTRIBS];
+    for (int j = 0; j < ARRAY_SIZE(buffer_map); ++j)
+@@ -174,6 +173,9 @@ zink_create_vertex_elements_state(struct pipe_context *pctx,
+          }
+       }
+    }
++
++   ves->hw_state.hash = _mesa_hash_data(ves, sizeof(*ves));
++
+    return ves;
+ }
+ 
+@@ -283,7 +285,6 @@ zink_create_blend_state(struct pipe_context *pctx,
+    struct zink_blend_state *cso = CALLOC_STRUCT(zink_blend_state);
+    if (!cso)
+       return NULL;
+-   cso->hash = _mesa_hash_pointer(cso);
+ 
+    if (blend_state->logicop_enable) {
+       cso->logicop_enable = VK_TRUE;
+@@ -344,6 +345,8 @@ zink_create_blend_state(struct pipe_context *pctx,
+    }
+    cso->dual_src_blend = util_blend_state_is_dual(blend_state, 0);
+ 
++   cso->hash = _mesa_hash_data(cso, sizeof(*cso));
++
+    return cso;
+ }
+ 
+-- 
+2.50.1 (Apple Git-155)
+
