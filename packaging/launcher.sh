@@ -117,6 +117,8 @@ export VK_DRIVER_FILES="$ICD"
 export GALLIUM_DRIVER=zink
 export MESA_LOADER_DRIVER_OVERRIDE=zink
 export MESA_GL_VERSION_OVERRIDE=4.6
+# Surface MoltenVK errors in the engine log (GPU fault forensics)
+export MVK_CONFIG_LOG_LEVEL=1
 # NB do NOT rely on DYLD_* here: the hardened runtime strips them. Zink finds
 # the bundled Vulkan loader via @rpath (patches/mesa/0004) and the engine
 # links bundled dylibs via LC_RPATH — the env below is only a courtesy for
