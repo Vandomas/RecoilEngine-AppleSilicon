@@ -31,6 +31,7 @@
 #include "System/Config/ConfigHandler.h"
 #include "System/Log/ILog.h"
 #include "System/Misc/SpringTime.h"
+#include "System/Platform/errorhandler.h"
 
 // SPRING_MAC_DIAGNOSTICS compiles in the heavier macOS diagnostics (headless
 // frame capture, per-frame present timing, raw-frame dumps, the present
@@ -909,6 +910,7 @@ namespace {
 constexpr int RB_RING = 3;
 unsigned int rbFBO[RB_RING] = { 0, 0, 0 };
 unsigned int rbTex[RB_RING] = { 0, 0, 0 };
+GLsync rbFence[RB_RING] = {};
 int  rbW = 0, rbH = 0;
 long rbFrame = 0;
 
@@ -923,8 +925,50 @@ long rbFrame = 0;
 //    heavy scenes vs ~1.3ms here at 5120x2160).
 constexpr int PP_RING = 4;
 unsigned int ppPBO[PP_RING] = { 0, 0, 0 };
+GLsync ppFence[PP_RING] = {};
+
 int  ppW = 0, ppH = 0;
 long ppFrame = 0;
+
+// Bounded wait on a ring slot's fence. A live slot signals in microseconds;
+// after a GPU reset (a page fault aborts the whole command buffer) the fence
+// never fires, and the maps/readbacks below used to inherit that wait and
+// freeze the process for good. Give the GPU 8s, then say so and exit — a
+// dead frame is diagnosable, a frozen window is not.
+static bool MacPresentWaitFence(GLsync& fence, const char* what)
+{
+	if (fence == nullptr)
+		return true;
+
+	// SPRING_MAC_FAKE_DEVICE_LOST=<n>: report the n-th wait (and every one
+	// after) as never signalling — exercises the bail-out below without
+	// needing a real GPU fault.
+	static const int fakeLostAfter = [] {
+		const char* s = getenv("SPRING_MAC_FAKE_DEVICE_LOST");
+		return (s != nullptr) ? atoi(s) : 0;
+	}();
+	static int waits = 0;
+	const bool fakeLost = (fakeLostAfter > 0 && ++waits >= fakeLostAfter);
+
+	constexpr GLuint64 STEP_NS = 500ull * 1000 * 1000;
+	for (int i = 0; !fakeLost && i < 16; ++i) {
+		const GLenum r = glClientWaitSync(fence, (i == 0) ? GL_SYNC_FLUSH_COMMANDS_BIT : 0, STEP_NS);
+		if (r == GL_ALREADY_SIGNALED || r == GL_CONDITION_SATISFIED) {
+			glDeleteSync(fence);
+			fence = nullptr;
+			return true;
+		}
+		if (r == GL_WAIT_FAILED)
+			break;
+	}
+
+	LOG_L(L_ERROR, "[MacPresent] %s never completed on the GPU: device lost", what);
+	ErrorMessageBox("The GPU stopped responding and the frame will never finish.\n"
+	                "This is usually a GPU fault (see infolog.txt and the system's\n"
+	                "gpuEvent report). The game cannot continue.",
+	                "Spring: GPU device lost", MBF_OK | MBF_CRASH);
+	return false;
+}
 
 bool EnsureGpuPackRing(int w, int h)
 {
@@ -933,6 +977,10 @@ bool EnsureGpuPackRing(int w, int h)
 	if (ppPBO[0] == 0)
 		glGenBuffers(PP_RING, ppPBO);
 	for (int i = 0; i < PP_RING; ++i) {
+		if (ppFence[i] != nullptr) {
+			glDeleteSync(ppFence[i]);
+			ppFence[i] = nullptr;
+		}
 		glBindBuffer(GL_PIXEL_PACK_BUFFER, ppPBO[i]);
 		glBufferData(GL_PIXEL_PACK_BUFFER, (GLsizeiptr)w * h * 4, nullptr, GL_STREAM_READ);
 	}
@@ -955,6 +1003,12 @@ bool EnsureStagingRing(int w, int h)
 	if (rbFBO[0] == 0) {
 		glGenFramebuffers(RB_RING, rbFBO);
 		glGenTextures(RB_RING, rbTex);
+	}
+	for (int i = 0; i < RB_RING; ++i) {
+		if (rbFence[i] != nullptr) {
+			glDeleteSync(rbFence[i]);
+			rbFence[i] = nullptr;
+		}
 	}
 	GLint prevDrawFBO = 0;
 	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFBO);
@@ -1320,6 +1374,9 @@ bool PresentFrame()
 		glBindBuffer(GL_PIXEL_PACK_BUFFER, ppPBO[cur]);
 		glReadPixels(0, 0, rdW, rdH, readFormat, GL_UNSIGNED_BYTE, nullptr);
 		glFlush(); // submit the pack now; otherwise it rides the NEXT frame's flush (+1 frame of map wait)
+		if (ppFence[cur] != nullptr)
+			glDeleteSync(ppFence[cur]);
+		ppFence[cur] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 #ifdef SPRING_MAC_DIAGNOSTICS
 		const spring_time tAfterRead = timePresent ? spring_now() : spring_notime;
 #endif
@@ -1328,6 +1385,8 @@ bool PresentFrame()
 		// no GPU round-trip) and copy into the IOSurface
 		if (ppFrame >= presentLagFrames) {
 			const int old = (int)((ppFrame - presentLagFrames) % PP_RING);
+			if (!MacPresentWaitFence(ppFence[old], "readback ring pack"))
+				return false;
 			glBindBuffer(GL_PIXEL_PACK_BUFFER, ppPBO[old]);
 			const GLsizeiptr nBytes = (GLsizeiptr)rdW * (GLsizeiptr)rdH * 4;
 			if (void* mapped = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, nBytes, GL_MAP_READ_BIT)) {
@@ -1379,11 +1438,16 @@ bool PresentFrame()
 		                  0, 0, rdW,   rdH,
 		                  GL_COLOR_BUFFER_BIT, GL_NEAREST);
 		glFlush(); // submit the batch so the blit executes during this frame
+		if (rbFence[cur] != nullptr)
+			glDeleteSync(rbFence[cur]);
+		rbFence[cur] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 
 		if (rbFrame >= presentLagFrames) {
 			// read back the `lag`-frames-old slot — its GPU work is done,
 			// so the driver's synchronous-map fallback returns immediately
 			const int old = (int)((rbFrame - presentLagFrames) % RB_RING);
+			if (!MacPresentWaitFence(rbFence[old], "readback ring blit"))
+				return false;
 			glBindFramebuffer(GL_READ_FRAMEBUFFER, rbFBO[old]);
 			const int rowPixels = static_cast<int>(ioRowBytes / 4);
 			if (rowPixels != rdW)
