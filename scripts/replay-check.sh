@@ -50,7 +50,12 @@ FW="${REPLAY_FRAMEWORKS:-$BAR/release-artifacts/BAR Launcher.app/Contents/Framew
 RES="${REPLAY_RESOURCES:-$BAR/release-artifacts/BAR Launcher.app/Contents/Resources}"
 export EGL_PLATFORM=surfaceless GALLIUM_DRIVER=zink MESA_LOADER_DRIVER_OVERRIDE=zink
 export MESA_GL_VERSION_OVERRIDE=4.6 DYLD_FALLBACK_LIBRARY_PATH="$FW" SPRING_DATADIR="$RES"
-export VK_ICD_FILENAMES="$RES/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json"
+# whichever driver the bundle ships: a MoltenVK-only build has no KosmicKrisp
+for icd in "$RES/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json" \
+           "$RES/vulkan/icd.d/moltenvk_icd.json"; do
+  [ -f "$icd" ] && { export VK_ICD_FILENAMES="$icd"; break; }
+done
+[ -n "${VK_ICD_FILENAMES:-}" ] || { echo "FATAL: no Vulkan ICD in $RES/vulkan/icd.d"; exit 1; }
 export VK_DRIVER_FILES="$VK_ICD_FILENAMES"
 
 echo "replay-check: demo=$(basename "$DEMO") engine=$BINVER"

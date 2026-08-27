@@ -1,0 +1,32 @@
+From 9c049198aa12eeef76aaf2868ca6b67fba823777 Mon Sep 17 00:00:00 2001
+From: benbreen <8338320+benbreen@users.noreply.github.com>
+Date: Mon, 13 Jul 2026 21:19:45 +0100
+Subject: [PATCH 09/11] zink: try @rpath/libvulkan.1.dylib before the bare name
+ on macOS
+
+Hardened-runtime app bundles cannot pass DYLD_FALLBACK_LIBRARY_PATH to the
+process (dyld strips DYLD_* without an entitlement), so a bare-name dlopen
+of the bundled Vulkan loader fails and zink silently falls back to nothing.
+@rpath resolves against the executable's / calling library's LC_RPATH, which
+bundles already carry. No behavior change outside macOS bundles.
+---
+ src/gallium/drivers/zink/zink_screen.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/gallium/drivers/zink/zink_screen.c b/src/gallium/drivers/zink/zink_screen.c
+index 7aea90f9..1befc837 100644
+--- a/src/gallium/drivers/zink/zink_screen.c
++++ b/src/gallium/drivers/zink/zink_screen.c
+@@ -3404,6 +3404,12 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
+ 
+    u_trace_state_init();
+ 
++#if DETECT_OS_APPLE
++   /* dyld ignores DYLD_* inside hardened-runtime bundles, so a bare-name dlopen
++    * misses a bundled loader; try @rpath first. */
++   screen->loader_lib = util_dl_open("@rpath/" VK_LIBNAME);
++   if (!screen->loader_lib)
++#endif
+    screen->loader_lib = util_dl_open(VK_LIBNAME);
+    if (!screen->loader_lib) {
+       if (!screen->driver_name_is_inferred)

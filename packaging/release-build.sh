@@ -381,7 +381,17 @@ fi
 # style relative locations at bundle time)
 cp "$MESA_PREFIX"/lib/libEGL*.dylib "$FRAMEWORKS/" 2>/dev/null || true
 cp "$MESA_PREFIX"/lib/libgallium*.dylib "$FRAMEWORKS/"
-cp "$MESA_PREFIX"/lib/libvulkan_kosmickrisp.dylib "$FRAMEWORKS/"
+# Optional: a MoltenVK-only driver build has no KosmicKrisp.
+if [ -f "$MESA_PREFIX/lib/libvulkan_kosmickrisp.dylib" ]; then
+  cp "$MESA_PREFIX"/lib/libvulkan_kosmickrisp.dylib "$FRAMEWORKS/"
+fi
+# MoltenVK covers macOS before 26 and Intel Macs.
+MOLTENVK_LIB="${MOLTENVK_LIB:-/opt/homebrew/opt/molten-vk/lib/libMoltenVK.dylib}"
+if [ -f "$MOLTENVK_LIB" ]; then
+  cp -L "$MOLTENVK_LIB" "$FRAMEWORKS/libMoltenVK.dylib"
+else
+  echo "FATAL: MoltenVK not found at $MOLTENVK_LIB (brew install molten-vk)"; exit 1
+fi
 # the Khronos Vulkan LOADER is a separate component (brew vulkan-loader) that
 # zink dlopens at runtime — dev machines silently supplied it from
 # /opt/homebrew/lib via env; user machines have nothing there (caught by the
@@ -393,10 +403,23 @@ for d in "$FRAMEWORKS"/*.dylib; do
   chmod u+w "$d"
   install_name_tool -id "@rpath/$(basename "$d")" "$d" 2>/dev/null || true
 done
+# The loader rejects a relative library_path; a bare name resolves through DYLD.
 mkdir -p "$RESOURCES/vulkan/icd.d"
-sed 's|"library_path": ".*"|"library_path": "../../../Frameworks/libvulkan_kosmickrisp.dylib"|' \
-  "$MESA_PREFIX/share/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json" \
-  > "$RESOURCES/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json"
+if [ -f "$MESA_PREFIX/share/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json" ]; then
+  sed 's|"library_path": ".*"|"library_path": "libvulkan_kosmickrisp.dylib"|' \
+    "$MESA_PREFIX/share/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json" \
+    > "$RESOURCES/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json"
+fi
+cat > "$RESOURCES/vulkan/icd.d/moltenvk_icd.json" <<'ICDJSON'
+{
+    "ICD": {
+        "api_version": "1.3.0",
+        "library_path": "libMoltenVK.dylib",
+        "is_portability_driver": true
+    },
+    "file_format_version": "1.0.1"
+}
+ICDJSON
 
 # Driver provenance: record exactly which Mesa commit + patches produced the
 # bundled driver, so the shipped .app is traceable to reproducible source.
@@ -577,7 +600,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>EngineVersion</key><string>${VERSION}</string>
   <key>PortVersion</key><string>${PORTVER}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>LSMinimumSystemVersion</key><string>26.0</string>
+  <key>LSMinimumSystemVersion</key><string>${BUNDLE_MIN_MACOS:-26.0}</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.strategy-games</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
@@ -781,10 +804,10 @@ elif [ "$REPLAY_SMOKE" = "1" ]; then
   BAR_WRITEDIR_OVERRIDE="$SMOKEDIR" BAR_CONTENT_SCOPE=lobby BAR_ASSUME_CONSENT=1 \
     timeout 90 "$APP/Contents/MacOS/launcher" \
     > "$SMOKELOG" 2>&1 || true
-  if grep -q "KOSMICKRISP_LOADED" "$SMOKELOG" "$SMOKEDIR/infolog.txt" 2>/dev/null; then
-    echo "bundle GUI smoke: KosmicKrisp identity verified"
+  if grep -qE "KOSMICKRISP_LOADED|MOLTENVK" "$SMOKELOG" "$SMOKEDIR/infolog.txt" 2>/dev/null; then
+    echo "bundle GUI smoke: driver identity verified"
   else
-    echo "FATAL: signed bundle did not load KosmicKrisp (DYLD/rpath regression?)"
+    echo "FATAL: signed bundle loaded no Vulkan driver (DYLD/rpath regression?)"
     tail -20 "$SMOKELOG"; exit 1
   fi
   rm -rf "$SMOKEDIR" "$SMOKELOG"

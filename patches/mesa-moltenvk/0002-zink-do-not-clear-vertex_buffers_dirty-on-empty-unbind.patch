@@ -1,0 +1,51 @@
+From f55bdb0aa64c7c438bf1b8720755871963f287cd Mon Sep 17 00:00:00 2001
+From: benbreen <8338320+benbreen@users.noreply.github.com>
+Date: Wed, 22 Jul 2026 21:01:10 +0100
+Subject: [PATCH 10/11] zink: do not clear vertex_buffers_dirty on empty/unbind
+
+Only consume the vertex_buffers_dirty flag when bindings are actually emitted (num_bindings>0), and never clear it on an unbind, so a queued rebind survives until a draw with real bindings consumes it.
+---
+ src/gallium/drivers/zink/zink_context.c | 8 ++++++--
+ src/gallium/drivers/zink/zink_draw.cpp  | 6 +++++-
+ 2 files changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
+index 5cd06140..b42e1af6 100644
+--- a/src/gallium/drivers/zink/zink_context.c
++++ b/src/gallium/drivers/zink/zink_context.c
+@@ -1455,7 +1455,8 @@ zink_bind_vertex_elements_state(struct pipe_context *pctx,
+    if (cso) {
+       if (state->element_state != &ctx->element_state->hw_state) {
+          ctx->vertex_state_changed = true;
+-         ctx->vertex_buffers_dirty = ctx->element_state->hw_state.num_bindings > 0;
++         if (ctx->element_state->hw_state.num_bindings > 0)
++            ctx->vertex_buffers_dirty = true;
+       }
+       state->element_state = &ctx->element_state->hw_state;
+       if (zink_screen(pctx->screen)->optimal_keys)
+@@ -1556,7 +1557,9 @@ zink_set_vertex_buffers_internal(struct pipe_context *pctx,
+ #endif
+    }
+    ctx->vertex_buffers_count = num_buffers;
+-   ctx->vertex_buffers_dirty = num_buffers > 0;
++   /* an unbind must not drop a rebind queued for a later draw */
++   if (num_buffers > 0)
++      ctx->vertex_buffers_dirty = true;
+ }
+ 
+ static void
+diff --git a/src/gallium/drivers/zink/zink_draw.cpp b/src/gallium/drivers/zink/zink_draw.cpp
+index 5ae73125..568c8458 100644
+--- a/src/gallium/drivers/zink/zink_draw.cpp
++++ b/src/gallium/drivers/zink/zink_draw.cpp
+@@ -147,7 +147,9 @@ zink_bind_vertex_buffers(struct zink_context *ctx)
+                                   elems->hw_state.num_bindings,
+                                   buffers, buffer_offsets, NULL, NULL);
+ 
+-   ctx->vertex_buffers_dirty = false;
++   /* only consume the flag when bindings were emitted, an empty state emits none */
++   if (elems->hw_state.num_bindings)
++      ctx->vertex_buffers_dirty = false;
+ }
+ 
+ ALWAYS_INLINE static void

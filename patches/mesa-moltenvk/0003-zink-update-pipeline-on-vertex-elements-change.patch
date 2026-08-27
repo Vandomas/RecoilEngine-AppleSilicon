@@ -1,0 +1,31 @@
+From 680b9d5fbb971c46c3193ff022ae24a27b53e246 Mon Sep 17 00:00:00 2001
+From: benbreen <8338320+benbreen@users.noreply.github.com>
+Date: Wed, 22 Jul 2026 21:01:40 +0100
+Subject: [PATCH 11/11] zink: update pipeline on vertex-elements change without
+ dynamic VI
+
+zink_draw's update_gfx_pipeline gate omitted ctx->vertex_state_changed. On drivers without VK_EXT_vertex_input_dynamic_state (KosmicKrisp/Metal) the vertex formats/strides are baked into the VkPipeline, so a draw that changes only the vertex-elements layout (e.g. glRectf vec2/stride-8 then glVertex3fv vec3/stride-12 in the same batch) reused the stale pipeline over the newly-bound buffer, producing a giant-triangle artifact. Add vertex_pipeline_changed to the gate; it is a template constant that compiles away on dynamic-VI drivers (zero cost upstream).
+
+Refs docs/DEVLOG.md watchdog cycle 6. Upstreamable to Mesa zink.
+---
+ src/gallium/drivers/zink/zink_draw.cpp | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/zink/zink_draw.cpp b/src/gallium/drivers/zink/zink_draw.cpp
+index 568c8458..17b6022b 100644
+--- a/src/gallium/drivers/zink/zink_draw.cpp
++++ b/src/gallium/drivers/zink/zink_draw.cpp
+@@ -733,7 +733,12 @@ zink_draw(struct pipe_context *pctx,
+    if (have_streamout && ctx->dirty_so_targets)
+       zink_emit_stream_output_targets(pctx);
+ 
+-   bool pipeline_changed = ctx->gfx_pipeline_state.dirty || rp_state != ctx->gfx_pipeline_state.rp_state || ctx->gfx_dirty || ctx->dirty_gfx_stages || prim_changed || BATCH_CHANGED ?
++   /* without VK_EXT_vertex_input_dynamic_state the vertex layout is baked into the
++    * pipeline, so a vertex-elements change alone has to update it too */
++   bool vertex_pipeline_changed = DYNAMIC_STATE != ZINK_DYNAMIC_VERTEX_INPUT2 &&
++                                  DYNAMIC_STATE != ZINK_DYNAMIC_VERTEX_INPUT &&
++                                  ctx->vertex_state_changed;
++   bool pipeline_changed = ctx->gfx_pipeline_state.dirty || rp_state != ctx->gfx_pipeline_state.rp_state || ctx->gfx_dirty || ctx->dirty_gfx_stages || prim_changed || vertex_pipeline_changed || BATCH_CHANGED ?
+                            update_gfx_pipeline<DYNAMIC_STATE, BATCH_CHANGED>(ctx, bs, mode) :
+                            false;
+ 

@@ -1,0 +1,51 @@
+zink: rename reserved shader variable names
+
+Names reach the driver shader compiler, and MSL treats some of them as
+types: a shader that declares a variable called "sampler" fails to
+build.
+
+---
+
+--- a/src/gallium/drivers/zink/nir_to_spirv/spirv_builder.c
++++ b/src/gallium/drivers/zink/nir_to_spirv/spirv_builder.c
+@@ -197,10 +197,40 @@
+    spirv_buffer_emit_word(&b->exec_modes, exec_mode);
+ }
+ 
++/* MSL treats some of these as types and fails on a variable named "sampler".
++ * Rename rather than drop the name, so shader dumps stay readable. */
++static const char *
++sanitize_name(const char *name)
++{
++   static const struct {
++      const char *from;
++      const char *to;
++   } reserved[] = {
++      { "sampler", "var_sampler" },
++      { "texture", "var_texture" },
++      { "buffer",  "var_buffer"  },
++      { "device",  "var_device"  },
++      { "constant", "var_constant" },
++      { "thread",  "var_thread"  },
++      { "kernel",  "var_kernel"  },
++      { "vertex",  "var_vertex"  },
++      { "fragment", "var_fragment" },
++   };
++
++   for (unsigned i = 0; i < ARRAY_SIZE(reserved); i++) {
++      if (!strcmp(name, reserved[i].from))
++         return reserved[i].to;
++   }
++
++   return name;
++}
++
+ void
+ spirv_builder_emit_name(struct spirv_builder *b, SpvId target,
+                         const char *name)
+ {
++   name = sanitize_name(name);
++
+    size_t pos = b->debug_names.num_words;
+    spirv_buffer_prepare(&b->debug_names, b->mem_ctx, 2);
+    spirv_buffer_emit_word(&b->debug_names, SpvOpName);

@@ -336,6 +336,7 @@ else   (UNIX)
 endif  (WIN32)
 
 if    (APPLE)
+	# Keep Homebrew includes from shadowing the vendored fmt.
 	include_directories(BEFORE "${CMAKE_CURRENT_SOURCE_DIR}/rts/lib/fmt/include")
 endif (APPLE)
 

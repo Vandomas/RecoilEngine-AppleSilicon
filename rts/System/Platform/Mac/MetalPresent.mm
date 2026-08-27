@@ -218,7 +218,6 @@ bool MacMetalPresent_Init(void* caMetalLayer)
 	g_layer.device          = g_device;
 	g_layer.pixelFormat     = MTLPixelFormatBGRA8Unorm;
 	g_layer.framebufferOnly  = NO; // allow the drawable to be a blit destination
-	g_layer.opaque           = YES;
 	// nextDrawable was pacing light scenes to exactly refresh/2 (60 on the
 	// 120Hz panel, metal-submit ~12ms): make the pool depth explicit.
 	// displaySync stays ON — this only deepens buffering, never tears.

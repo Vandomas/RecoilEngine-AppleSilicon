@@ -1,0 +1,35 @@
+zink: do not require nullDescriptor
+
+MoltenVK reports robustness2.nullDescriptor as unsupported, and zink
+refuses to create a screen without it. Gate the descriptor buffer mode
+on the feature instead.
+
+---
+--- a/src/gallium/drivers/zink/zink_screen.c
++++ b/src/gallium/drivers/zink/zink_screen.c
+@@ -3494,10 +3494,6 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
+       goto fail;
+    }
+ 
+-   if (!screen->info.rb2_feats.nullDescriptor) {
+-      mesa_loge("Zink requires the nullDescriptor feature of KHR/EXT robustness2.");
+-      goto fail;
+-   }
+ 
+    if (zink_set_driver_strings(screen)) {
+       mesa_loge("ZINK: failed to set driver strings\n");
+@@ -3722,6 +3718,14 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
+ 
+    bool can_db = true;
+    {
++      if (!screen->info.rb2_feats.nullDescriptor) {
++         if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
++            if (!screen->driver_name_is_inferred)
++               mesa_loge("Cannot use db descriptor mode without robustness2.nullDescriptor");
++            goto fail;
++         }
++         can_db = false;
++      }
+       if (!screen->info.have_EXT_descriptor_buffer) {
+          if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
+             if (!screen->driver_name_is_inferred)
