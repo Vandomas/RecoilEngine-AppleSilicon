@@ -537,7 +537,7 @@ fi
 export SPRING_DATADIR="$RES" BAR_INFOLOG="$WRITEDIR/infolog.txt" BAR_PORT_VERSION="$PORT_VERSION"
 while :; do
   T0=$SECONDS
-  "$HERE/spring" --write-dir "$WRITEDIR" --menu "$LOBBY_RAPID" "$@"
+  "$HERE/spring" --write-dir "$WRITEDIR" --menu "$LOBBY_RAPID" "$@" 2>> "$WRITEDIR/engine-stderr.log"
   RC=$?
   case "$RC" in
     # a failed exec (kernel refused the binary: bad arch, quarantine, corrupt file)
