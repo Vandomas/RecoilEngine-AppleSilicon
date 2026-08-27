@@ -101,6 +101,14 @@ if [ ! -f "$ICD" ]; then
 fi
 echo "vulkan driver: $(basename "$ICD") (macOS $OS_MAJOR)" >> "$WRITEDIR/launcher.log" 2>/dev/null || true
 
+if [ "$ICD" = "$MVK_ICD" ]; then
+  # MoltenVK's command object pool is not thread safe and loses pooled commands
+  # under zink's threaded submission, 64KB of push-descriptor data each. Turning
+  # pooling off frees commands on return instead. Measured on the reference
+  # replay: 447MB leaked in 5 minutes with the pool, 83MB without it.
+  export MVK_CONFIG_USE_COMMAND_POOLING=0
+fi
+
 # MoltenVK ignores GL_COLOR_LOGIC_OP, so the inverted selection box draws solid.
 CTRLPANEL="$WRITEDIR/LuaUI/ctrlpanel.txt"
 mkdir -p "$WRITEDIR/LuaUI"
