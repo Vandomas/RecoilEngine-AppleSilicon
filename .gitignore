@@ -182,3 +182,6 @@ compile_commands.json
 # macOS port: local build dependencies and packaged app output
 /deps
 /release-artifacts
+.DS_Store
+chobby/
+deps/
