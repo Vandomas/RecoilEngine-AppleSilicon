@@ -213,6 +213,26 @@ func handleDownload(_ fd: Int32, _ cmd: [String: Any]) {
    sendMsg(fd, "DownloadFinished", ["name": name, "isSuccess": false, "isAborted": false])
 }
 
+// The lobby only asks for folders inside the write dir: the dir itself, demos/,
+// LuaUI/Widgets. Anything else is refused rather than handed to /usr/bin/open,
+// which would launch whatever the path points at.
+func openInFinder(_ raw: String) {
+   let path = raw.hasPrefix("file://") ? (URL(string: raw)?.path ?? "") : raw
+   guard !path.isEmpty else { return }
+   let target = URL(fileURLWithPath: path).standardized.path
+   let root = URL(fileURLWithPath: writeDir).standardized.path
+   guard target == root || target.hasPrefix(root + "/") else {
+      log("refusing to open \(target), outside the write dir")
+      return
+   }
+   // a folder the user has not filled yet does not exist, and open would fail on it
+   try? FileManager.default.createDirectory(atPath: target, withIntermediateDirectories: true)
+   let proc = Process()
+   proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+   proc.arguments = [target]
+   do { try proc.run() } catch { log("open \(target) failed: \(error)") }
+}
+
 func handleLine(_ fd: Int32, _ line: Data) {
    guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
          let name = obj["name"] as? String else { return }
@@ -237,6 +257,9 @@ func handleLine(_ fd: Int32, _ line: Data) {
       }
    case "Download":
       handleDownload(fd, cmd)
+   case "OpenFile":
+      guard let path = cmd["path"] as? String else { return }
+      openInFinder(path)
    default:
       break
    }
