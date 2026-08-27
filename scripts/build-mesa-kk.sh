@@ -29,6 +29,10 @@ MESA_PREFIX="${MESA_PREFIX:-$DEPS/mesa-native}"           # driver install prefi
 MESA_SRC="${MESA_SRC:-$DEPS/mesa-src}"
 PATCH_DIR="${MESA_PATCH_DIR:-$BAR/patches/mesa}"
 FORCE="${MESA_FORCE_REBUILD:-0}"
+# MESA_VULKAN_DRIVER=none builds zink alone, for MoltenVK bundles on macOS before 26.
+VULKAN_DRIVER="${MESA_VULKAN_DRIVER:-kosmickrisp}"
+[ "$VULKAN_DRIVER" = "none" ] && VULKAN_DRIVER=""
+DEPLOYMENT_TARGET="${MESA_DEPLOYMENT_TARGET:-}"
 mkdir -p "$DEPS"
 
 # ---- provenance: what driver SHOULD be at the prefix -----------------------
@@ -36,6 +40,8 @@ patch_list() { ls "$PATCH_DIR"/*.patch 2>/dev/null | sort; }
 want_stamp() {
   echo "mesa_commit=$MESA_COMMIT"
   echo "spirv_xlat=$SPIRV_XLAT_TAG"
+  echo "vulkan_driver=${VULKAN_DRIVER:-none}"
+  echo "deployment_target=${DEPLOYMENT_TARGET:-default}"
   local p
   for p in $(patch_list); do
     echo "patch=$(basename "$p"):$(shasum -a 256 "$p" | cut -d' ' -f1)"
@@ -131,6 +137,9 @@ python3 -m venv "$DEPS/mesa-venv"
 # the shipped driver dylibs embed no absolute build path. Maps
 # $BAR -> "." for preprocessor (-ffile-prefix-map) and debug info
 # (-fdebug-prefix-map), across C / C++ / Obj-C / Obj-C++. Path-string only.
+# MESA_DEPLOYMENT_TARGET=13.0 builds a driver that also loads on older macOS.
+MINVER=""
+[ -n "$DEPLOYMENT_TARGET" ] && MINVER="'-mmacosx-version-min=$DEPLOYMENT_TARGET',"
 cat > "$DEPS/plain-native.ini" <<INI
 [binaries]
 c = '/usr/bin/clang'
@@ -139,14 +148,14 @@ objc = '/usr/bin/clang'
 objcpp = '/usr/bin/clang++'
 
 [built-in options]
-c_args = ['-ffile-prefix-map=$BAR=.','-fdebug-prefix-map=$BAR=.']
-cpp_args = ['-ffile-prefix-map=$BAR=.','-fdebug-prefix-map=$BAR=.']
-objc_args = ['-ffile-prefix-map=$BAR=.','-fdebug-prefix-map=$BAR=.']
-objcpp_args = ['-ffile-prefix-map=$BAR=.','-fdebug-prefix-map=$BAR=.']
-c_link_args = ['-Wl,-lto_library,$L19/lib/libLTO.dylib','-L/opt/homebrew/lib']
-cpp_link_args = ['-Wl,-lto_library,$L19/lib/libLTO.dylib','-L/opt/homebrew/lib']
-objc_link_args = ['-Wl,-lto_library,$L19/lib/libLTO.dylib','-L/opt/homebrew/lib']
-objcpp_link_args = ['-Wl,-lto_library,$L19/lib/libLTO.dylib','-L/opt/homebrew/lib']
+c_args = [$MINVER'-ffile-prefix-map=$BAR=.','-fdebug-prefix-map=$BAR=.']
+cpp_args = [$MINVER'-ffile-prefix-map=$BAR=.','-fdebug-prefix-map=$BAR=.']
+objc_args = [$MINVER'-ffile-prefix-map=$BAR=.','-fdebug-prefix-map=$BAR=.']
+objcpp_args = [$MINVER'-ffile-prefix-map=$BAR=.','-fdebug-prefix-map=$BAR=.']
+c_link_args = [$MINVER'-Wl,-lto_library,$L19/lib/libLTO.dylib','-L/opt/homebrew/lib']
+cpp_link_args = [$MINVER'-Wl,-lto_library,$L19/lib/libLTO.dylib','-L/opt/homebrew/lib']
+objc_link_args = [$MINVER'-Wl,-lto_library,$L19/lib/libLTO.dylib','-L/opt/homebrew/lib']
+objcpp_link_args = [$MINVER'-Wl,-lto_library,$L19/lib/libLTO.dylib','-L/opt/homebrew/lib']
 INI
 
 source "$DEPS/mesa-venv/bin/activate"
@@ -169,7 +178,7 @@ meson setup build-native --native-file "$DEPS/plain-native.ini" \
   --pkg-config-path "$DEPS/spirv-xlat-install/lib/pkgconfig" \
   -Dprefix="$NEUTRAL_PREFIX" -Dplatforms=macos \
   -Degl-native-platform=surfaceless -Degl=enabled -Dglx=disabled \
-  -Dgallium-drivers=zink -Dvulkan-drivers=kosmickrisp \
+  -Dgallium-drivers=zink -Dvulkan-drivers="$VULKAN_DRIVER" \
   -Dmoltenvk-dir=/opt/homebrew/opt/molten-vk \
   -Dllvm=enabled -Dshared-llvm=disabled -Dbuildtype=release
 DESTDIR="$STAGE" ninja -C build-native install
@@ -210,7 +219,9 @@ done
 
 echo "=== [4/4] Artifact verification ==="
 test -f "$MESA_PREFIX/lib/libEGL.dylib" || { echo "FATAL: libEGL.dylib missing"; exit 1; }
-test -f "$MESA_PREFIX/lib/libvulkan_kosmickrisp.dylib" || { echo "FATAL: kosmickrisp missing"; exit 1; }
+if [ -n "$VULKAN_DRIVER" ]; then
+  test -f "$MESA_PREFIX/lib/libvulkan_kosmickrisp.dylib" || { echo "FATAL: kosmickrisp missing"; exit 1; }
+fi
 file "$MESA_PREFIX/lib/libEGL.dylib" | grep -q arm64 || { echo "FATAL: libEGL not arm64"; exit 1; }
 ls "$MESA_PREFIX/lib/"*.dylib
 ls "$MESA_PREFIX/share/vulkan/icd.d/" 2>/dev/null || true
