@@ -1,5 +1,9 @@
 /* This file is part of the Spring engine (GPL v2 or later), see LICENSE.html */
 
+#ifndef _WIN32
+#include <poll.h>
+#endif
+
 #include "UDPConnection.h"
 
 #include <cinttypes>
@@ -418,6 +422,24 @@ void UDPConnection::Update()
 {
 	spring_time curTime = spring_gettime();
 	outgoing.UpdateTime(spring_tomsecs(curTime));
+
+	// make silent connection stalls visible: the pause overlay the game shows
+	// when frames stop arriving gives no hint whether the link died or the
+	// server paused, so stamp the log when incoming data dries up and again
+	// when it recovers
+	if (dataRecv > 0 && !muted) {
+		const float sinceRecv = (curTime - lastPacketRecvTime).toMilliSecsf();
+		if (!netStallLogged) {
+			if (sinceRecv > 1000.0f) {
+				netStallLogged = true;
+				netStallStart = lastPacketRecvTime;
+				LOG_L(L_WARNING, "[netstall] no data from server for %.1fs", sinceRecv * 0.001f);
+			}
+		} else if (sinceRecv < 250.0f) {
+			netStallLogged = false;
+			LOG_L(L_WARNING, "[netstall] server data resumed after %.1fs", (lastPacketRecvTime - netStallStart).toMilliSecsf() * 0.001f);
+		}
+	}
 
 	#ifdef ENABLE_DEBUG_STATS
 	{
@@ -1069,9 +1091,29 @@ void UDPConnection::SendPacket(Packet& pkt)
 
 	EMULATE_LATENCY( !EMULATE_PACKET_LOSS( LOSS_COUNTER ) ) {
 		mySocket->send_to(buffer(sendBuffer), addr, flags, err);
+		// the socket is non-blocking so a full send buffer surfaces as
+		// try_again instead of wedging the main thread. give the kernel a
+		// moment to drain and retry once, dropping is only for real jams
+		if (err && err.value() == asio::error::try_again) {
+#ifdef _WIN32
+			WSAPOLLFD pfd = {(SOCKET)mySocket->native_handle(), POLLWRNORM, 0};
+			if (WSAPoll(&pfd, 1, 5) > 0)
+#else
+			struct pollfd pfd = {mySocket->native_handle(), POLLOUT, 0};
+			if (poll(&pfd, 1, 5) > 0)
+#endif
+			{
+				err.clear();
+				mySocket->send_to(buffer(sendBuffer), addr, flags, err);
+			}
+		}
 	}
 
 	if (CheckErrorCode(err, addr))
+		return;
+
+	// a dropped packet is not a sent packet
+	if (err)
 		return;
 
 	dataSent += sendBuffer.size();

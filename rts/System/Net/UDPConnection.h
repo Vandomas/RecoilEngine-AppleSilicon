@@ -159,6 +159,8 @@ private:
 	spring_time lastChunkCreatedTime;
 	spring_time lastPacketSendTime;
 	spring_time lastPacketRecvTime;
+	spring_time netStallStart;
+	bool netStallLogged = false;
 
 	spring_time lastUnackResentTime;
 	spring_time lastNakTime;
