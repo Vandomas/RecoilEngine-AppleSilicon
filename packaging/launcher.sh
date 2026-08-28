@@ -102,8 +102,8 @@ fi
 echo "vulkan driver: $(basename "$ICD") (macOS $OS_MAJOR)" >> "$WRITEDIR/launcher.log" 2>/dev/null || true
 
 if [ "$ICD" = "$MVK_ICD" ]; then
-  # Pooled commands leaked their payload. patches/moltenvk/0001 fixes it at the
-  # source; pooling stays off as a second net until the fix has soaked in game.
+  # MoltenVK's command pool is not thread safe under threaded submission and
+  # leaks pooled commands: 447MB over a 5 minute replay, 83MB with pooling off.
   export MVK_CONFIG_USE_COMMAND_POOLING=0
 fi
 
