@@ -30,6 +30,7 @@
 #include "System/MainDefines.h"
 #include "System/SafeUtil.h"
 #include "System/Log/ILog.h"
+#include "System/Config/ConfigHandler.h"
 
 #include <SDL_events.h>
 #include <SDL_hints.h>
@@ -81,10 +82,24 @@ namespace {
 
 IMouseInput* mouseInput = nullptr;
 
+CONFIG(float, MouseRelativeSpeedScale)
+	.defaultValue(1.0f)
+	.minimumValue(0.1f)
+	.maximumValue(10.0f)
+	.description("Scales mouse movement while in relative mode (locked camera, MMB scroll). 1.0 = raw device speed; raise it if panning feels slower than the OS pointer.");
+
 IMouseInput::IMouseInput(bool relModeWarp)
 {
 	inputCon = input.AddHandler([this](const SDL_Event& event) { return this->HandleSDLMouseEvent(event); });
 	#ifndef HEADLESS
+	if (configHandler != nullptr) {
+		const float relSpeedScale = configHandler->GetFloat("MouseRelativeSpeedScale");
+		if (relSpeedScale != 1.0f) {
+			char buf[32];
+			snprintf(buf, sizeof(buf), "%g", relSpeedScale);
+			SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_SPEED_SCALE, buf);
+		}
+	}
 	// Windows 10 FCU (Fall Creators Update) causes spurious SDL_MOUSEMOTION
 	// events to be generated with SDL_HINT_MOUSE_RELATIVE_MODE_WARP enabled
 	//
