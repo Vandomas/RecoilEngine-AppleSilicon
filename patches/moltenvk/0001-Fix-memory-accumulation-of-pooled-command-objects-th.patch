@@ -1,0 +1,97 @@
+From 9f76592e71a29bd2986a404597b13f924776adbe Mon Sep 17 00:00:00 2001
+From: Vandomas <vandcim@gmail.com>
+Date: Fri, 28 Aug 2026 17:37:54 +0300
+Subject: [PATCH] Fix memory accumulation of pooled command objects that retain
+ their content.
+
+---
+ Docs/Whats_New.md                              |  1 +
+ MoltenVK/MoltenVK/Commands/MVKCmdPipeline.h    |  4 ++++
+ MoltenVK/MoltenVK/Commands/MVKCmdPipeline.mm   | 11 +++++++++++
+ MoltenVK/MoltenVK/Commands/MVKCommand.h        |  6 ++++++
+ MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm |  1 +
+ 5 files changed, 23 insertions(+)
+
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCmdPipeline.h b/MoltenVK/MoltenVK/Commands/MVKCmdPipeline.h
+index 5119f856..14320931 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCmdPipeline.h
++++ b/MoltenVK/MoltenVK/Commands/MVKCmdPipeline.h
+@@ -266,6 +266,8 @@ public:
+ 
+ 	void encode(MVKCommandEncoder* cmdEncoder) override;
+ 
++	void releaseRetainedContent() override;
++
+ 	~MVKCmdPushDescriptorSet() override;
+ 
+ protected:
+@@ -293,6 +295,8 @@ public:
+ 
+ 	void encode(MVKCommandEncoder* cmdEncoder) override;
+ 
++	void releaseRetainedContent() override;
++
+ 	~MVKCmdPushDescriptorSetWithTemplate() override;
+ 
+ protected:
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCmdPipeline.mm b/MoltenVK/MoltenVK/Commands/MVKCmdPipeline.mm
+index 90929544..7100465b 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCmdPipeline.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCmdPipeline.mm
+@@ -442,6 +442,11 @@
+ 	cmdEncoder->getState().pushDescriptorSet(_pipelineBindPoint, _pipelineLayout, _set, static_cast<uint32_t>(_descriptorWrites.size()), _descriptorWrites.data());
+ }
+ 
++void MVKCmdPushDescriptorSet::releaseRetainedContent() {
++	clearDescriptorWrites();
++	_descriptorWrites.shrink_to_fit();
++}
++
+ MVKCmdPushDescriptorSet::~MVKCmdPushDescriptorSet() {
+ 	clearDescriptorWrites();
+ 	if (_pipelineLayout) { _pipelineLayout->release(); }
+@@ -501,6 +506,12 @@
+ 	cmdEncoder->getState().pushDescriptorSet(_descUpdateTemplate, _pipelineLayout, _set, _pData);
+ }
+ 
++void MVKCmdPushDescriptorSetWithTemplate::releaseRetainedContent() {
++	free(_pData);
++	_pData = nullptr;
++	_dataSize = 0;
++}
++
+ MVKCmdPushDescriptorSetWithTemplate::~MVKCmdPushDescriptorSetWithTemplate() {
+ 	if (_pipelineLayout) { _pipelineLayout->release(); }
+ 	free(_pData);
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommand.h b/MoltenVK/MoltenVK/Commands/MVKCommand.h
+index ca029013..7edbc61b 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommand.h
++++ b/MoltenVK/MoltenVK/Commands/MVKCommand.h
+@@ -74,6 +74,12 @@ protected:
+ 	// This function is overridden in each concrete subclass declaration, but the implementation of
+ 	// this function in each subclass is automatically generated in the MVKCommandPool implementation.
+ 	virtual MVKCommandTypePool<MVKCommand>* getTypePool(MVKCommandPool* cmdPool) = 0;
++
++	/**
++	 * Releases any content retained by this command, so that it is not
++	 * held by the command pool while this command awaits reuse.
++	 */
++	virtual void releaseRetainedContent() {}
+ };
+ 
+ 
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
+index 8c24debb..5f19b851 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
+@@ -194,6 +194,7 @@
+ void MVKCommandBuffer::releaseCommands(MVKCommand* command) {
+     while(command) {
+         MVKCommand* nextCommand = command->_next; // Establish next before returning current to pool.
++        command->releaseRetainedContent();
+         (command->getTypePool(getCommandPool()))->returnObject(command);
+         command = nextCommand;
+     }
+-- 
+2.50.1 (Apple Git-155)
+

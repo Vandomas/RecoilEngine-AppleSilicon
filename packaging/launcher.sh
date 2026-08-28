@@ -101,11 +101,8 @@ if [ ! -f "$ICD" ]; then
 fi
 echo "vulkan driver: $(basename "$ICD") (macOS $OS_MAJOR)" >> "$WRITEDIR/launcher.log" 2>/dev/null || true
 
-if [ "$ICD" = "$MVK_ICD" ]; then
-  # MoltenVK's command pool is not thread safe under threaded submission and
-  # leaks pooled commands: 447MB over a 5 minute replay, 83MB with pooling off.
-  export MVK_CONFIG_USE_COMMAND_POOLING=0
-fi
+# Pooled commands used to leak their payload, patches/moltenvk/0001 fixes it
+# at the source, so the MVK_CONFIG_USE_COMMAND_POOLING=0 workaround is gone.
 
 # MoltenVK ignores GL_COLOR_LOGIC_OP, so the inverted selection box draws solid.
 CTRLPANEL="$WRITEDIR/LuaUI/ctrlpanel.txt"
