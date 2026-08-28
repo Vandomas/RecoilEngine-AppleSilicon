@@ -53,7 +53,13 @@
 using namespace GL::State;
 
 
+#ifdef __APPLE__
+// the software cursor is drawn inside the frame and trails the OS pointer by the
+// present latency of the readback path, which reads as "slow mouse" (issue #7)
+CONFIG(bool, HardwareCursor).defaultValue(true).description("Sets hardware mouse cursor rendering. If you have a low framerate, your mouse cursor will seem \"laggy\". Setting hardware cursor will render the mouse cursor separately from spring and the mouse will behave normally. Note, not all GPU drivers support it in fullscreen mode!");
+#else
 CONFIG(bool, HardwareCursor).defaultValue(false).description("Sets hardware mouse cursor rendering. If you have a low framerate, your mouse cursor will seem \"laggy\". Setting hardware cursor will render the mouse cursor separately from spring and the mouse will behave normally. Note, not all GPU drivers support it in fullscreen mode!");
+#endif
 CONFIG(bool, InvertMouse).defaultValue(false);
 CONFIG(bool, MouseRelativeModeWarp).defaultValue(true);
 CONFIG(bool, MiniMapMouseWheel).defaultValue(false).description("Whether MiniMap responds to MouseWheel events");
