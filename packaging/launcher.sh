@@ -101,8 +101,11 @@ if [ ! -f "$ICD" ]; then
 fi
 echo "vulkan driver: $(basename "$ICD") (macOS $OS_MAJOR)" >> "$WRITEDIR/launcher.log" 2>/dev/null || true
 
-# Pooled commands used to leak their payload, patches/moltenvk/0001 fixes it
-# at the source, so the MVK_CONFIG_USE_COMMAND_POOLING=0 workaround is gone.
+if [ "$ICD" = "$MVK_ICD" ]; then
+  # Pooled commands leaked their payload. patches/moltenvk/0001 fixes it at the
+  # source; pooling stays off as a second net until the fix has soaked in game.
+  export MVK_CONFIG_USE_COMMAND_POOLING=0
+fi
 
 # MoltenVK ignores GL_COLOR_LOGIC_OP, so the inverted selection box draws solid.
 CTRLPANEL="$WRITEDIR/LuaUI/ctrlpanel.txt"
