@@ -265,6 +265,17 @@ void UDPConnection::Init()
 	// make sure protocoldef is initialized
 	CBaseNetProtocol::Get();
 
+	// a blocking send_to can wedge the main thread for good when the send
+	// buffer fills up, seen on macOS with VPN tunnels that stall briefly.
+	// drop the packet instead, the chunk layer resends anyway and try_again
+	// is already treated as harmless in CheckErrorCode
+	if (mySocket != nullptr) {
+		asio::error_code nbErr;
+		mySocket->non_blocking(true, nbErr);
+		if (nbErr)
+			LOG_L(L_WARNING, "[UDPConnection::Init] could not set non-blocking mode: %s", nbErr.message().c_str());
+	}
+
 	lastNakTime = spring_gettime();
 	lastUnackResentTime = spring_gettime();
 	lastPacketSendTime = spring_gettime();
