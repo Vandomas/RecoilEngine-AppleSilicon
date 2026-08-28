@@ -101,6 +101,12 @@ if [ ! -f "$ICD" ]; then
 fi
 echo "vulkan driver: $(basename "$ICD") (macOS $OS_MAJOR)" >> "$WRITEDIR/launcher.log" 2>/dev/null || true
 
+if [ "$ICD" = "$MVK_ICD" ]; then
+  # MoltenVK's command pool is not thread safe under threaded submission and
+  # leaks pooled commands: 447MB over a 5 minute replay, 83MB with pooling off.
+  export MVK_CONFIG_USE_COMMAND_POOLING=0
+fi
+
 # MoltenVK ignores GL_COLOR_LOGIC_OP, so the inverted selection box draws solid.
 CTRLPANEL="$WRITEDIR/LuaUI/ctrlpanel.txt"
 mkdir -p "$WRITEDIR/LuaUI"
@@ -117,6 +123,8 @@ export VK_DRIVER_FILES="$ICD"
 export GALLIUM_DRIVER=zink
 export MESA_LOADER_DRIVER_OVERRIDE=zink
 export MESA_GL_VERSION_OVERRIDE=4.6
+# surface MoltenVK errors in the log
+export MVK_CONFIG_LOG_LEVEL=1
 # NB do NOT rely on DYLD_* here: the hardened runtime strips them. Zink finds
 # the bundled Vulkan loader via @rpath (patches/mesa/0004) and the engine
 # links bundled dylibs via LC_RPATH — the env below is only a courtesy for
@@ -535,7 +543,7 @@ fi
 export SPRING_DATADIR="$RES" BAR_INFOLOG="$WRITEDIR/infolog.txt" BAR_PORT_VERSION="$PORT_VERSION"
 while :; do
   T0=$SECONDS
-  "$HERE/spring" --write-dir "$WRITEDIR" --menu "$LOBBY_RAPID" "$@"
+  "$HERE/spring" --write-dir "$WRITEDIR" --menu "$LOBBY_RAPID" "$@" 2>> "$WRITEDIR/engine-stderr.log"
   RC=$?
   case "$RC" in
     # a failed exec (kernel refused the binary: bad arch, quarantine, corrupt file)

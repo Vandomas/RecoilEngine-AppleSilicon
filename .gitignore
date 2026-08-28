@@ -183,5 +183,6 @@ compile_commands.json
 /deps
 /release-artifacts
 .DS_Store
-chobby/
+chobby
 deps/
+chobby

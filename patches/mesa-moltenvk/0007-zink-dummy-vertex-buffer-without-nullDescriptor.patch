@@ -1,0 +1,64 @@
+diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
+index b42e1af6876..7900a8de992 100644
+--- a/src/gallium/drivers/zink/zink_context.c
++++ b/src/gallium/drivers/zink/zink_context.c
+@@ -167,6 +167,7 @@ zink_context_destroy(struct pipe_context *pctx)
+    if (ctx->blitter)
+       util_blitter_destroy(ctx->blitter);
+ 
++   pipe_resource_reference(&ctx->dummy_vertex_buffer, NULL);
+    pipe_resource_reference(&ctx->dummy_xfb_buffer, NULL);
+ 
+    zink_descriptors_deinit_bindless(ctx);
+@@ -5883,6 +5884,14 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
+          PIPE_BIND_STREAM_OUTPUT, PIPE_USAGE_IMMUTABLE, sizeof(data));
+       if (!ctx->dummy_xfb_buffer)
+          goto fail;
++      /* without robustness2 nullDescriptor a VK_NULL_HANDLE vertex binding is
++       * invalid; bind this instead and let robustBufferAccess zero the reads */
++      if (!screen->info.rb2_feats.nullDescriptor) {
++         ctx->dummy_vertex_buffer = pipe_buffer_create(&screen->base,
++            PIPE_BIND_VERTEX_BUFFER, PIPE_USAGE_IMMUTABLE, sizeof(data));
++         if (!ctx->dummy_vertex_buffer)
++            goto fail;
++      }
+    }
+    if (!is_copy_only) {
+       if (!zink_descriptors_init(ctx))
+@@ -5942,6 +5951,8 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
+       ctx->invalidate_descriptor_state = zink_context_invalidate_descriptor_state;
+    if (!is_copy_only && !is_compute_only) {
+       pipe_buffer_write_nooverlap(&ctx->base, ctx->dummy_xfb_buffer, 0, sizeof(data), data);
++      if (ctx->dummy_vertex_buffer)
++         pipe_buffer_write_nooverlap(&ctx->base, ctx->dummy_vertex_buffer, 0, sizeof(data), data);
+       if (screen->info.have_EXT_color_write_enable)
+          reapply_color_write(ctx);
+ 
+diff --git a/src/gallium/drivers/zink/zink_draw.cpp b/src/gallium/drivers/zink/zink_draw.cpp
+index 685de67f9ff..e22a5f023ea 100644
+--- a/src/gallium/drivers/zink/zink_draw.cpp
++++ b/src/gallium/drivers/zink/zink_draw.cpp
+@@ -129,6 +129,11 @@ zink_bind_vertex_buffers(struct zink_context *ctx)
+          assert(res->obj->buffer);
+          buffers[i] = res->obj->buffer;
+          buffer_offsets[i] = vb->buffer_offset;
++      } else if (unlikely(ctx->dummy_vertex_buffer)) {
++         /* VK_NULL_HANDLE vertex bindings require robustness2 nullDescriptor;
++          * reads of the 4-byte dummy come back as zeros via robustBufferAccess */
++         buffers[i] = zink_resource(ctx->dummy_vertex_buffer)->obj->buffer;
++         buffer_offsets[i] = 0;
+       } else {
+          buffers[i] = VK_NULL_HANDLE;
+          buffer_offsets[i] = 0;
+diff --git a/src/gallium/drivers/zink/zink_types.h b/src/gallium/drivers/zink/zink_types.h
+index 9e6d43d3ea3..84b16fc7407 100644
+--- a/src/gallium/drivers/zink/zink_types.h
++++ b/src/gallium/drivers/zink/zink_types.h
+@@ -1900,6 +1900,7 @@ struct zink_context {
+       uint64_t render_passes;
+    } hud;
+ 
++   struct pipe_resource *dummy_vertex_buffer;
+    struct pipe_resource *dummy_xfb_buffer;
+ 
+    unsigned buffer_rebind_counter;
