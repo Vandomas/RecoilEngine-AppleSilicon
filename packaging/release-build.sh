@@ -800,11 +800,25 @@ if [ "$REPLAY_SMOKE" = "1" ] && [ "$PROFILE" != "bar" ]; then
 elif [ "$REPLAY_SMOKE" = "1" ]; then
   SMOKELOG=$(mktemp)
   SMOKEDIR=$(mktemp -d)
-  mkdir -p "$SMOKEDIR/rapid"   # skip the first-run lobby download
+  # Seed lobby content from the local data dir when one exists: the smoke
+  # verifies that the SIGNED bundle loads the real driver, not the first-run
+  # download; a fresh writedir spends the whole timeout downloading and the
+  # engine (and its driver-identity infolog line) never comes up.
+  BAR_DD="$HOME/Library/Application Support/Beyond-All-Reason-mac"
+  if [ -d "$BAR_DD/pool" ]; then
+    for d in pool packages rapid games maps; do
+      [ -e "$BAR_DD/$d" ] && ln -s "$BAR_DD/$d" "$SMOKEDIR/$d"
+    done
+  else
+    mkdir -p "$SMOKEDIR/rapid"   # skip the first-run lobby download
+  fi
   BAR_WRITEDIR_OVERRIDE="$SMOKEDIR" BAR_CONTENT_SCOPE=lobby BAR_ASSUME_CONSENT=1 \
-    timeout 90 "$APP/Contents/MacOS/launcher" \
+    BAR_SKIP_CONTENT_CHECK=1 \
+    timeout 150 "$APP/Contents/MacOS/launcher" \
     > "$SMOKELOG" 2>&1 || true
-  if grep -qE "KOSMICKRISP_LOADED|MOLTENVK" "$SMOKELOG" "$SMOKEDIR/infolog.txt" 2>/dev/null; then
+  # the launcher keeps its own transcript in the writedir; the engine identity
+  # line (GL renderer: ... MOLTENVK / KOSMICKRISP_LOADED) lands in infolog.txt
+  if grep -qE "KOSMICKRISP_LOADED|MOLTENVK" "$SMOKELOG" "$SMOKEDIR/launcher.log" "$SMOKEDIR/infolog.txt" 2>/dev/null; then
     echo "bundle GUI smoke: driver identity verified"
   else
     echo "FATAL: signed bundle loaded no Vulkan driver (DYLD/rpath regression?)"
