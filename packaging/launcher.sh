@@ -105,6 +105,11 @@ if [ "$ICD" = "$MVK_ICD" ]; then
   # MoltenVK's command pool is not thread safe under threaded submission and
   # leaks pooled commands: 447MB over a 5 minute replay, 83MB with pooling off.
   export MVK_CONFIG_USE_COMMAND_POOLING=0
+  # descriptor sets go into Metal argument buffers, which hold plain gpu
+  # addresses, so a resource that goes away leaves a stale address behind and
+  # the gpu faults on it mid game. binding straight to the encoders instead
+  # survived every run and is faster here anyway
+  export MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0
 fi
 
 # MoltenVK ignores GL_COLOR_LOGIC_OP, so the inverted selection box draws solid.
