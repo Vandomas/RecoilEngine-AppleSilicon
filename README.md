@@ -14,8 +14,9 @@ No Intel build. Selection boxes are a plain outline instead of the inverted one,
 
 ## Already upstream
 
-Six fixes from this fork are in, so you get them even without this build.
+Seven fixes from this fork are in, so you get them even without this build.
 
+- Recoil [#3288](https://github.com/beyond-all-reason/RecoilEngine/pull/3288), the assimp math headers did not build with libc++
 - Recoil [#3270](https://github.com/beyond-all-reason/RecoilEngine/pull/3270), a savegame with long strings crashed the engine
 - Recoil [#3277](https://github.com/beyond-all-reason/RecoilEngine/pull/3277), a broken savegame now gives an error instead of hanging
 - BAR [#8898](https://github.com/beyond-all-reason/Beyond-All-Reason/pull/8898), battle sounds preload while the map loads
@@ -24,6 +25,16 @@ Six fixes from this fork are in, so you get them even without this build.
 - Mesa [!43857](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/43857), renderpass tracking for KosmicKrisp
 
 ## What is fixed here
+
+### GPU crashes, endless freezes and a memory leak
+
+The 0.14.1 batch. A GPU page fault killed live games: zink left empty vertex buffer slots unbound, and MoltenVK has no nullDescriptor to cover that, so the driver now binds a small dummy buffer there. A dead GPU used to hang the game forever on a fence that never signals. The wait is capped at 8 seconds now, then a device lost dialog. Random noise blocks and pink squares were a zink pipeline hash collision, fixed upstream in Mesa and carried here as a backport. MoltenVK's command pooling also leaked, about 90 MB per minute of play until the process aborted. The launcher turns pooling off, 447 MB down to 83 over the reference replay.
+
+### Mouse and keyboard
+
+The hardware cursor is on by default now: the software one is drawn inside the frame and trails the pointer by the present latency, which reads as a slow mouse. A new MouseRelativeSpeedScale setting scales MMB scrolling on top of that. The physical Cmd key counts as Alt, so keybinds made for a PC keyboard land where your thumb expects them, and Cmd+C/V still copy and paste. MacCmdActsAsAlt=0 turns it off.
+
+Health bars, unit outlines and firestate icons vanishing mid-game is a bug in the game widgets themselves, they lose the fallback mesh when an instance table grows. The fix is in review as BAR [#8951](https://github.com/beyond-all-reason/Beyond-All-Reason/pull/8951), and until it lands there are three drop-in widget files in [issue #5](https://github.com/Vandomas/RecoilEngine-AppleSilicon/issues/5).
 
 ### Replays, widgets and downloads in the lobby
 
@@ -53,9 +64,9 @@ fmt include order for Apple Clang, fmt for the headless target and a couple more
 
 The engine draws through OpenGL 4.6, zink translates that to Vulkan, and MoltenVK puts Vulkan on Metal. That last part used to be KosmicKrisp, which needs Metal 4 and therefore macOS 26. Switching to MoltenVK is what lets this build run on macOS 13.3, and it turned out faster as well, 124 to 136 fps against 82 to 89 on an M3 Max in the same benchmark.
 
-Mesa needs six patches for this, they live in `patches/mesa-moltenvk/` and are small enough to read in one sitting. Two of them are pure zink bugs that also bite elsewhere, a vertex rebind that got dropped and a pipeline that was not updated when only the vertex layout changed.
+Mesa needs eight patches for this, they live in `patches/mesa-moltenvk/` and are small enough to read in one sitting. Three of them are pure zink bugs that also bite elsewhere: a vertex rebind that got dropped, a pipeline that was not updated when only the vertex layout changed, and a pipeline hash collision that is already fixed in upstream Mesa and carried here as a backport.
 
-Every release is certified before it ships. A reference replay is re-simulated headless and has to come out bit for bit identical, the last one ran 16846 frames with no sync errors.
+Every release is certified before it ships. A reference replay is re-simulated headless and has to come out bit for bit identical, the last one ran 15314 frames with no sync errors.
 
 ## Build and update
 
