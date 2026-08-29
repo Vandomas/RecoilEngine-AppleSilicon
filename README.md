@@ -28,6 +28,8 @@ Seven fixes from this fork are in, so you get them even without this build.
 
 ### GPU crashes, endless freezes and a memory leak
 
+0.14.2 stops the device losses that hit long games: descriptors no longer go through Metal argument buffers, which carry bare gpu addresses with no length, so a read that runs past a buffer lands in unmapped memory and kills the device. Binding straight to the encoders survived every test run and is faster here as well. Network sends no longer block the main thread either, which is what froze the client when a VPN tunnel stalled, and the log now says when server data stops and comes back.
+
 The 0.14.1 batch. A GPU page fault killed live games: zink left empty vertex buffer slots unbound, and MoltenVK has no nullDescriptor to cover that, so the driver now binds a small dummy buffer there. A dead GPU used to hang the game forever on a fence that never signals. The wait is capped at 8 seconds now, then a device lost dialog. Random noise blocks and pink squares were a zink pipeline hash collision, fixed upstream in Mesa and carried here as a backport. MoltenVK's command pooling also leaked, about 90 MB per minute of play until the process aborted. The launcher turns pooling off, 447 MB down to 83 over the reference replay.
 
 ### Mouse and keyboard
