@@ -175,7 +175,12 @@ if [ "$IDENTITY" != "-" ] && [ "${#NOTARY_AUTH[@]}" -gt 0 ]; then
 fi
 
 echo "=== [1/7] gated engine build ($SRC -> $BUILD)"
-ENGINE_SRC="$SRC" ENGINE_BUILD="$BUILD" MESA_PREFIX="$MESA_PREFIX" "$BAR/scripts/build-engine.sh"
+ENGINE_SRC="$SRC" ENGINE_BUILD="$BUILD" MESA_PREFIX="$MESA_PREFIX" \
+  MESA_VULKAN_DRIVER="${MESA_VULKAN_DRIVER:-$SHIP_MESA_VULKAN_DRIVER}" \
+  MESA_DEPLOYMENT_TARGET="${MESA_DEPLOYMENT_TARGET:-$SHIP_MESA_DEPLOYMENT_TARGET}" \
+  MESA_PATCH_DIR="${MESA_PATCH_DIR:-$SHIP_MESA_PATCH_DIR}" \
+  ENGINE_DEPLOYMENT_TARGET="${ENGINE_DEPLOYMENT_TARGET:-$SHIP_ENGINE_DEPLOYMENT_TARGET}" \
+  "$BAR/scripts/build-engine.sh"
 # build-engine.sh hard-fails unless the streflop archive reproduces the
 # lane's libm parity hashes — "bare ninja" output can't reach the steps below.
 

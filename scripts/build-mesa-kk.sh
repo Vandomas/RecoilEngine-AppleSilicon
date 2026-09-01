@@ -55,7 +55,11 @@ WANT="$(want_stamp)"
 key() { grep -v '^#'; }
 NPATCH=$(patch_list | wc -l | tr -d ' ')
 
-driver_present() { [ -f "$MESA_PREFIX/lib/libEGL.dylib" ] && [ -f "$MESA_PREFIX/lib/libvulkan_kosmickrisp.dylib" ]; }
+driver_present() {
+  [ -f "$MESA_PREFIX/lib/libEGL.dylib" ] || return 1
+  # a zink-only prefix has no KosmicKrisp, so only ask for it when this build wants one
+  [ -z "$VULKAN_DRIVER" ] || [ -f "$MESA_PREFIX/lib/libvulkan_kosmickrisp.dylib" ]
+}
 
 # ---- idempotency: decide whether to (re)build ------------------------------
 if driver_present && [ "$FORCE" != "1" ]; then
