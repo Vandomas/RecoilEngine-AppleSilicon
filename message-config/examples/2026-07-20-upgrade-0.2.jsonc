@@ -9,14 +9,14 @@
   "body": [
     "<p style='font-family:-apple-system;font-size:13px'>",
     "Version <b>0.2</b> improves performance and fixes bugs. See the ",
-    "<a href='https://github.com/benbreen/RecoilEngine-AppleSilicon/releases/latest'>latest release</a>, ",
+    "<a href='https://github.com/Vandomas/RecoilEngine-AppleSilicon/releases/latest'>latest release</a>, ",
     "or read the <span style='color:#e2621d'>changelog</span> on the releases page.",
     "</p>"
   ],
   "suppressible": true,
   "suppressDefault": false,
   "buttons": [
-    { "label": "Download", "action": "open-url", "url": "https://github.com/benbreen/RecoilEngine-AppleSilicon/releases/latest", "then": "quit", "default": true },
+    { "label": "Download", "action": "open-url", "url": "https://github.com/Vandomas/RecoilEngine-AppleSilicon/releases/latest", "then": "quit", "default": true },
     { "label": "Later", "action": "continue" }
   ]
 }
