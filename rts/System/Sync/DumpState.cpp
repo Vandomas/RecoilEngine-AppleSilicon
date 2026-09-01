@@ -1,5 +1,6 @@
 /* This file is part of the Spring engine (GPL v2 or later), see LICENSE.html */
 
+#include "System/RangesCompat.h"
 #include <string>
 #include <fstream>
 #include <vector>
@@ -48,7 +49,6 @@
 #include "System/FileSystem/ArchiveScanner.h"
 #include "System/Log/ILog.h"
 #include "System/SpringHash.h"
-#include "System/RangesCompat.h"
 
 static bool onlyHash = true;
 

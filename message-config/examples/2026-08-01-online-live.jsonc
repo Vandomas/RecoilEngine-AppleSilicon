@@ -15,7 +15,7 @@
   "suppressible": true,
   "suppressDefault": true,
   "buttons": [
-    { "label": "Download new version", "action": "open-url", "url": "https://github.com/benbreen/RecoilEngine-AppleSilicon/releases/latest", "then": "quit", "default": true },
+    { "label": "Download new version", "action": "open-url", "url": "https://github.com/Vandomas/RecoilEngine-AppleSilicon/releases/latest", "then": "quit", "default": true },
     { "label": "Continue with old version", "action": "continue" }
   ]
 }
