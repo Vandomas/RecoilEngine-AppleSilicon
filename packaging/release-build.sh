@@ -91,7 +91,7 @@ ENABLE_ONLINE="${BAR_ONLINE:-0}"
 # messages.json each launch. Default = the port's GitHub repo. Override with
 # --messages-config <https-url> or --messages-local <path> (a local file,
 # baked as a file:// URL — for testing builds against an unpublished config).
-MESSAGES_CONFIG="${BAR_MESSAGES_CONFIG:-https://raw.githubusercontent.com/benbreen/RecoilEngine-AppleSilicon/main/message-config/messages.json}"
+MESSAGES_CONFIG="${BAR_MESSAGES_CONFIG:-https://raw.githubusercontent.com/Vandomas/RecoilEngine-AppleSilicon/main/message-config/messages.json}"
 
 # Test tiers (mirrors upstream Recoil CI: the *build* workflow only builds +
 # packages; ALL test stages are OPT-IN as of 2026-07-20 — plain builds stay
