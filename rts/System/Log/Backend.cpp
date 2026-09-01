@@ -225,7 +225,11 @@ void log_backend_record(int level, const char* section, const char* fmt, va_list
 	int  rollupLevel = level;
 	char rollupMsg[192] = {0};
 	char rollupSection[64] = {0};
-	{
+	// stack frames differ only in their numbers, so the signature folds a whole
+	// trace into one line and the watchdog or crash dump loses everything but
+	// its first frame. never coalesce that section
+	const bool isStackTrace = (section != nullptr && strcmp(section, "CrashHandler") == 0);
+	if (!isStackTrace) {
 		using namespace log_coalesce;
 		char sig[sizeof(Slot::sig)];
 		MakeSig(section, cur_record.msg, sig, sizeof(sig));
