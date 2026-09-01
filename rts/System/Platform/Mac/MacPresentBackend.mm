@@ -1130,12 +1130,10 @@ bool EnsureDirectRing(int w, int h)
 	dpH = h;
 	dpFrame = 0;
 
-	static bool logged = false;
-	if (!logged) {
-		LOG("[MacPresent] persistent PBO ring for direct present (%dx%d, %d slots x %zu bytes)",
-		        w, h, DP_RING, allocBytes);
-		logged = true;
-	}
+	// every reallocation unmaps memory metal may still be reading, so log each one
+	static unsigned allocs = 0;
+	LOG("[MacPresent] persistent PBO ring for direct present (%dx%d, %d slots x %zu bytes, allocation #%u)",
+	        w, h, DP_RING, allocBytes, ++allocs);
 	return true;
 }
 
@@ -1205,6 +1203,13 @@ bool DirectPresentFrame(int rdW, int rdH, GLenum readFormat, int lagFrames)
 						break;
 					}
 				}
+				// an older slot on screen is a frame going back in time, the flicker
+				// people describe, so keep a count of it in the log
+				static uint64_t fallbacks = 0;
+				++fallbacks;
+				if ((fallbacks & (fallbacks - 1)) == 0)
+					LOG_L(L_INFO, "[MacPresent] lag-%d slot still packing after 100ms, presenting %s (x%llu)",
+					        lagFrames, old >= 0 ? "an older slot" : "nothing", (unsigned long long)fallbacks);
 			}
 		}
 		if (old >= 0)

@@ -680,9 +680,17 @@ void MacMetalPresent_InvalidatePixelBuffers(void)
     // reclaim both budget slots so no command buffer still references a wrap.
     if (g_presentQueue != nil) {
         dispatch_sync(g_presentQueue, ^{});
+        int acquired = 0;
         for (int i = 0; i < 2; ++i)
-            dispatch_semaphore_wait(g_presentBudget, dispatch_time(DISPATCH_TIME_NOW, 2ull * NSEC_PER_SEC));
-        for (int i = 0; i < 2; ++i)
+            if (dispatch_semaphore_wait(g_presentBudget, dispatch_time(DISPATCH_TIME_NOW, 2ull * NSEC_PER_SEC)) == 0)
+                ++acquired;
+        // a slot we never got is a present still on the gpu, and the wraps it reads
+        // are about to be unmapped. say so, and only give back what we took or the
+        // budget grows past two
+        if (acquired < 2)
+            fprintf(stderr, "[MetalPresent] invalidating pixel-buffer wraps with %d present(s) still in flight after 2s\n",
+                    2 - acquired);
+        for (int i = 0; i < acquired; ++i)
             dispatch_semaphore_signal(g_presentBudget);
     }
     for (int i = 0; i < g_pbWrapCount; ++i) {
