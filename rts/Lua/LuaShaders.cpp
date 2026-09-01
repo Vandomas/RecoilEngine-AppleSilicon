@@ -688,6 +688,13 @@ int LuaShaders::CreateShader(lua_State* L)
 	if (!graphicSrcEmpty && !computeSrcEmpty)
 		return 0;
 
+	// start each attempt with a clean slate: the log is only ever written on
+	// failure, so without this a compile that fails without producing a message
+	// reports whatever the previous attempt left behind. content that probes a
+	// geometry-shader variant and falls back to a plain one hits exactly that,
+	// and the real reason for the fallback failing was invisible
+	CLuaHandle::GetActiveShaders(L).errorLog.clear();
+
 	bool success;
 	const GLuint vertObj = CompileObject(L, shdrDefs, vertSrcs, GL_VERTEX_SHADER, success);
 
