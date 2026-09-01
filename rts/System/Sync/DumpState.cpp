@@ -49,7 +49,6 @@
 #include "System/FileSystem/ArchiveScanner.h"
 #include "System/Log/ILog.h"
 #include "System/SpringHash.h"
-#include "System/RangesCompat.h"
 
 static bool onlyHash = true;
 

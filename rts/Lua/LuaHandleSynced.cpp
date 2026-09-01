@@ -57,7 +57,6 @@
 #include "System/Misc/TracyDefs.h"
 
 #include <ranges>
-#include "System/RangesCompat.h"
 
 LuaRulesParams::Params  CSplitLuaHandle::gameParams;
 
