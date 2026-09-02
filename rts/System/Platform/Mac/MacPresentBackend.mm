@@ -50,6 +50,7 @@ CONFIG(int, MacPresentSwapchain).defaultValue(0).minimumValue(0).maximumValue(1)
 
 CONFIG(float, MacRenderScale).defaultValue(0.0f).minimumValue(0.0f).maximumValue(4.0f).description("macOS: render resolution in pixels per point. 0 keeps the backing scale, anything else is clamped between 1.0 and it.");
 
+CONFIG(float, MacBackingScale).defaultValue(1.0f).minimumValue(0.25f).maximumValue(4.0f).readOnly(false).description("macOS: pixels per point the window renders at. Written by the engine so the menu can size itself, not meant to be edited.");
 // A truly zero-copy present (render the engine FBO directly into the
 // IOSurface that Metal samples — no readback at all) is blocked on Mesa
 // upstream work: KosmicKrisp's VK_EXT_external_memory_metal needs to grow
@@ -692,6 +693,10 @@ double EffectiveBackingScale(SDL_Window* window)
 	static double loggedScale = -1.0;
 	if (std::fabs(scale - loggedScale) > 1e-3) {
 		loggedScale = scale;
+		// the menu has no way to ask how dense the screen is, and its default ui
+		// scale of 1 draws half size on a retina panel, so publish the scale
+		if (configHandler != nullptr)
+			configHandler->Set("MacBackingScale", float(scale), true);
 		LOG("[EGL] effective backing scale %.3f (raw %.2f, window %dx%d pt, desktop %.0fx%.0f pt, panel %.0fx%.0f px, %d GPU cores)%s",
 				scale, bsf, winW, winH,
 				(double)desktopPts.width, (double)desktopPts.height,
@@ -1141,8 +1146,32 @@ bool EnsureDirectRing(int w, int h)
 // Pack this frame into the ring and hand the lag-frames-old slot to the Metal
 // present. Returns false (and latches dpFailed) if the path is unavailable —
 // the caller then runs the IOSurface fallback from this frame on.
+// per-second tally of the two ways a frame can miss its slot, so a report of on-screen
+// flicker can be matched against what the present path was doing at that moment
+unsigned dpFenceWaitsSec = 0;
+unsigned dpStaleSec = 0;
+unsigned dpFramesSec = 0;
+double   dpTallyStart = 0.0;
+
+void TallyPresentSecond()
+{
+	const double now = CFAbsoluteTimeGetCurrent();
+	if (dpTallyStart == 0.0) { dpTallyStart = now; return; }
+	if ((now - dpTallyStart) < 1.0)
+		return;
+
+	if (dpStaleSec > 0 || dpFenceWaitsSec > 0)
+		LOG("[MacPresent/sec] frames=%u gpu-behind=%u stale-slot=%u", dpFramesSec, dpFenceWaitsSec, dpStaleSec);
+
+	dpTallyStart = now;
+	dpFramesSec = dpFenceWaitsSec = dpStaleSec = 0;
+}
+
 bool DirectPresentFrame(int rdW, int rdH, GLenum readFormat, int lagFrames)
 {
+	dpFramesSec += 1;
+	TallyPresentSecond();
+
 	if (dpFailed)
 		return false;
 	if (!EnsureDirectRing(rdW, rdH)) {
@@ -1150,10 +1179,17 @@ bool DirectPresentFrame(int rdW, int rdH, GLenum readFormat, int lagFrames)
 		return false;
 	}
 
+	// measurement only: leave out the gpu pack, the metal blit, or both, to see
+	// what the present path itself costs. the ring keeps cycling so nothing else
+	// notices, the screen just shows whatever the slots hold
+	static const bool skipPack = (getenv("SPRING_MAC_SKIP_PACK") != nullptr);
+	static const bool skipBlit = (getenv("SPRING_MAC_SKIP_BLIT") != nullptr);
+
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	const int cur = (int)(dpFrame % DP_RING);
 	glBindBuffer(GL_PIXEL_PACK_BUFFER, dpPBO[cur]);
-	glReadPixels(0, 0, rdW, rdH, readFormat, GL_UNSIGNED_BYTE, nullptr);
+	if (!skipPack)
+		glReadPixels(0, 0, rdW, rdH, readFormat, GL_UNSIGNED_BYTE, nullptr);
 	// a silently-failing pack presents stale frames (the async-copy flicker
 	// class); packing into a PERSISTENT map is legal, but verify early on
 	if (dpFrame < 100) {
@@ -1186,6 +1222,7 @@ bool DirectPresentFrame(int rdW, int rdH, GLenum readFormat, int lagFrames)
 		    glClientWaitSync(dpFence[old], GL_SYNC_FLUSH_COMMANDS_BIT, 0) == GL_TIMEOUT_EXPIRED) {
 			static uint64_t fenceWaits = 0;
 			++fenceWaits;
+			dpFenceWaitsSec += 1;
 			// L_INFO, not L_WARNING: this fires whenever the GPU render can't keep
 			// the frame budget (a normal perf symptom on a heavy scene, not an
 			// error). At L_WARNING it spammed the on-screen console; keep it in the
@@ -1209,12 +1246,13 @@ bool DirectPresentFrame(int rdW, int rdH, GLenum readFormat, int lagFrames)
 				// people describe, so keep a count of it in the log
 				static uint64_t fallbacks = 0;
 				++fallbacks;
+				dpStaleSec += 1;
 				if ((fallbacks & (fallbacks - 1)) == 0)
 					LOG_L(L_INFO, "[MacPresent] lag-%d slot still packing after 100ms, presenting %s (x%llu)",
 					        lagFrames, old >= 0 ? "an older slot" : "nothing", (unsigned long long)fallbacks);
 			}
 		}
-		if (old >= 0)
+		if (old >= 0 && !skipBlit)
 			presented = MacMetalPresent_PresentPixelBuffer(dpMap[old], dpAllocBytes, rdW, rdH,
 			                                               readFormat == GL_RGBA, true);
 	}

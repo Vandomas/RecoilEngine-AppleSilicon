@@ -28,6 +28,7 @@
 #include "Rendering/Models/ModelsMemStorage.h"
 #include "System/EventHandler.h"
 #include "System/type2.h"
+#include "Game/GlobalUnsynced.h"
 #include "System/TimeProfiler.h"
 #include "System/SafeUtil.h"
 #include "System/StringUtil.h"
@@ -754,6 +755,25 @@ void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)
 		// silently or verbosely clear queue at the end of every frame
 		if (clearErrors || glDebugErrors)
 			glClearErrors("GR", __func__, glDebugErrors);
+
+		// A lost device leaves every later gl call a no-op, so the game keeps running
+		// blind: the window freezes, the watchdog fires half a minute later and the
+		// process dies with a hang report instead of a reason. Ask the driver instead
+		// and quit straight away, the launcher then brings the menu back.
+		if (GLAD_GL_KHR_robustness != 0) {
+			static uint32_t resetChecks = 0;
+			if ((++resetChecks % 30u) == 0u) {
+				const GLenum resetStatus = glGetGraphicsResetStatus();
+				if (resetStatus != GL_NO_ERROR) {
+					static bool reported = false;
+					if (!reported) {
+						reported = true;
+						LOG_L(L_ERROR, "[GR::%s] the graphics device was lost (reset status 0x%04x), quitting", __func__, resetStatus);
+						gu->globalQuit = true;
+					}
+				}
+			}
+		}
 
 #if defined(__APPLE__) && !defined(HEADLESS) && defined(SPRING_MAC_DIAGNOSTICS)
 		// SPRING_FRAME_CAPTURE: headless verification capture of the default
