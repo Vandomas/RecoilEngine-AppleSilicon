@@ -31,6 +31,7 @@
 #include "System/Config/ConfigHandler.h"
 #include "Rendering/GlobalRendering.h"
 #include "System/Log/ILog.h"
+#include "Game/GlobalUnsynced.h"
 #include "System/Misc/SpringTime.h"
 #include "System/Platform/errorhandler.h"
 
@@ -1218,6 +1219,7 @@ bool DirectPresentFrame(int rdW, int rdH, GLenum readFormat, int lagFrames)
 		// stale glass. Smoothness is the product, so the wait stays; the
 		// copy removal is still a win everywhere the GPU keeps up.
 		int old = (int)((dpFrame - lagFrames) % DP_RING);
+		bool stalledNow = false;
 		if (dpFence[old] != nullptr &&
 		    glClientWaitSync(dpFence[old], GL_SYNC_FLUSH_COMMANDS_BIT, 0) == GL_TIMEOUT_EXPIRED) {
 			static uint64_t fenceWaits = 0;
@@ -1233,6 +1235,7 @@ bool DirectPresentFrame(int rdW, int rdH, GLenum readFormat, int lagFrames)
 			if (glClientWaitSync(dpFence[old], GL_SYNC_FLUSH_COMMANDS_BIT, 100000000ull) == GL_TIMEOUT_EXPIRED) {
 				// pathological (>100ms): use the newest COMPLETED older slot
 				// instead of reading a buffer mid-write; skip if none
+				stalledNow = true;
 				old = -1;
 				for (int k = lagFrames + 1; k <= (int)std::min<long>(dpFrame, DP_RING - 2); ++k) {
 					const int cand = (int)((dpFrame - k) % DP_RING);
@@ -1255,6 +1258,23 @@ bool DirectPresentFrame(int rdW, int rdH, GLenum readFormat, int lagFrames)
 		if (old >= 0 && !skipBlit)
 			presented = MacMetalPresent_PresentPixelBuffer(dpMap[old], dpAllocBytes, rdW, rdH,
 			                                               readFormat == GL_RGBA, true);
+
+		// after a lost device no fence signals again and gl calls turn into no-ops,
+		// so the game would run blind until the watchdog kills it half a minute
+		// later. the driver does not grant reset notification here, so the pack
+		// fence is the detector: a live gpu never goes five seconds without one
+		static double stalledSince = 0.0;
+		if (!stalledNow) {
+			stalledSince = 0.0;
+		} else {
+			const double now = CFAbsoluteTimeGetCurrent();
+			if (stalledSince == 0.0) {
+				stalledSince = now;
+			} else if ((now - stalledSince) > 5.0 && !gu->globalQuit) {
+				LOG_L(L_ERROR, "[MacPresent] the GPU has completed nothing for %.1f s, treating the device as lost and quitting", now - stalledSince);
+				gu->globalQuit = true;
+			}
+		}
 	}
 	glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
