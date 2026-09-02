@@ -590,6 +590,11 @@ bool CGlobalRendering::CreateWindowAndContext(const char* title)
 	//   suffices for most of Spring)
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, forceCoreContext? SDL_GL_CONTEXT_PROFILE_CORE: SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
+#if defined(__APPLE__)
+	// without this Mesa answers glGetGraphicsResetStatus with GL_NO_ERROR forever, and the
+	// check in SwapBuffers that quits on a lost device never fires
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_RESET_NOTIFICATION, SDL_GL_CONTEXT_RESET_LOSE_CONTEXT);
+#endif
 
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, minCtx.x);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, minCtx.y);
@@ -1383,6 +1388,11 @@ void CGlobalRendering::LogVersionInfo(const char* sdlVersionStr, const char* glV
 	LOG("\tGL version  : %s", globalRenderingInfo.glVersion);
 	LOG("\tGL vendor   : %s", globalRenderingInfo.glVendor);
 	LOG("\tGL renderer : %s", globalRenderingInfo.glRenderer);
+	{
+		GLint resetStrategy = 0;
+		glGetIntegerv(GL_RESET_NOTIFICATION_STRATEGY_ARB, &resetStrategy);
+		LOG("\tGL reset notification: %s", (resetStrategy == GL_LOSE_CONTEXT_ON_RESET_ARB) ? "lose context (device loss is detected)" : "none (device loss goes unnoticed)");
+	}
 	LOG("\tGLSL version: %s", globalRenderingInfo.glslVersion);
 	LOG("\tGLAD version: %s", globalRenderingInfo.gladVersion);
 	LOG("\tGPU memory  : %s", glVidMemStr);
