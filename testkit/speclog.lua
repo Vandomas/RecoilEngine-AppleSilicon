@@ -4,9 +4,17 @@ function widget:GetInfo()
 end
 
 local lastEcho, nSample, maxDt = 0, 0, 0
+local lastShot, shots = 0, 0
 
 function widget:Update(dt)
 	if dt > maxDt then maxDt = dt end
+	local now = os.clock()
+	if lastShot == 0 then lastShot = now end
+	if now - lastShot > 30 and shots < 40 then
+		lastShot = now
+		shots = shots + 1
+		Spring.SendCommands("screenshot png")
+	end
 end
 
 function widget:DrawScreenPost()

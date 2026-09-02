@@ -4,7 +4,7 @@ import socket, hashlib, base64, sys, time, re, os, subprocess, threading, secret
 
 HOST, PORT = "server4.beyondallreason.info", 8200
 DD = os.path.expanduser("~/Library/Application Support/Beyond-All-Reason-mac")
-APP = "/Applications/BAR Launcher.app"
+APP = os.environ.get("SPEC_APP", "/Applications/BAR Launcher.app")
 BAD = re.compile(r"mvk-error|DEVICE LOST|Invalid Resource|Lost VkDevice|OUT_OF_DEVICE", re.I)
 CONNECTED = re.compile(r"GameData|Using map|Connection established|serverMessage|PlayerName", re.I)
 
@@ -23,7 +23,8 @@ class Lobby:
         print("greeting:", self.readline())
 
     def send(self, line):
-        self.sock.sendall((line + "\n").encode())
+        try: self.sock.sendall((line + "\n").encode())
+        except (OSError, ConnectionError): self.alive = False
 
     def readline(self, timeout=30):
         deadline = time.time() + timeout
@@ -83,12 +84,12 @@ class Lobby:
             while self.alive:
                 try: self.readline(timeout=5)
                 except (socket.timeout, TimeoutError): pass
-                except OSError: break
+                except (OSError, ConnectionError): break
         def ploop():
             while self.alive:
                 time.sleep(25)
                 try: self.send("PING")
-                except OSError: break
+                except (OSError, ConnectionError): break
         threading.Thread(target=rloop, daemon=True).start()
         threading.Thread(target=ploop, daemon=True).start()
 
@@ -100,16 +101,24 @@ def make_wd(tag):
         os.symlink(f"{DD}/{d}", f"{wd}/{d}")
     if os.path.isdir(f"{DD}/cache"): subprocess.run(["cp", "-R", f"{DD}/cache", f"{wd}/cache"])
     if os.path.exists(f"{DD}/springsettings.cfg"): shutil.copy(f"{DD}/springsettings.cfg", wd)
+    extra = os.environ.get("SPEC_EXTRA_CFG", "")
+    if extra:
+        with open(f"{wd}/springsettings.cfg", "a") as fh:
+            for line in extra.split(";"):
+                if line.strip(): fh.write(line.strip() + "\n")
     os.makedirs(f"{wd}/LuaUI/Widgets", exist_ok=True)
     job = os.path.dirname(os.path.abspath(__file__))
     shutil.copy(f"{job}/speclog.lua", f"{wd}/LuaUI/Widgets/speclog.lua")
+    shutil.copy(f"{job}/pauseprobe.lua", f"{wd}/LuaUI/Widgets/pauseprobe.lua")
+    shutil.copy(f"{job}/camsweep.lua", f"{wd}/LuaUI/Widgets/camsweep.lua")
     return wd
 
 def run_engine(wd, icd, pooling, script, minutes):
     env = dict(os.environ,
         EGL_PLATFORM="surfaceless", GALLIUM_DRIVER="zink",
         MESA_LOADER_DRIVER_OVERRIDE="zink", MESA_GL_VERSION_OVERRIDE="4.6",
-        VK_ICD_FILENAMES=icd, VK_DRIVER_FILES=icd, MVK_CONFIG_LOG_LEVEL="1",
+        VK_ICD_FILENAMES=icd, VK_DRIVER_FILES=icd,
+        MVK_CONFIG_LOG_LEVEL=os.environ.get("MVK_CONFIG_LOG_LEVEL", "1"),
         DYLD_FALLBACK_LIBRARY_PATH=f"{APP}/Contents/Frameworks",
         SPRING_DATADIR=f"{APP}/Contents/Resources",
         MVK_CONFIG_USE_COMMAND_POOLING=pooling)
@@ -118,6 +127,7 @@ def run_engine(wd, icd, pooling, script, minutes):
                             env=env, stdout=errlog, stderr=subprocess.STDOUT)
     infolog = f"{wd}/infolog.txt"
     t0 = time.time(); connected = False; verdict = None; bad = []
+    lastSimFrame, lastSimMove = 0, time.time()
     deadline = t0 + minutes * 60
     while time.time() < deadline:
         time.sleep(5)
@@ -129,6 +139,15 @@ def run_engine(wd, icd, pooling, script, minutes):
         if not connected and ("GameDataReceived" in txt or re.search(r"\[f=0*\d", txt)):
             connected = True
             print(f"  connected at t+{time.time()-t0:.0f}s")
+        # a spectator whose sim stops advancing renders a frozen scene and stresses
+        # nothing, so stop counting that as exposure
+        if connected:
+            fr = re.findall(r"\[f=(\d+)\]", txt)
+            cur = int(fr[-1]) if fr else 0
+            if cur > lastSimFrame:
+                lastSimFrame, lastSimMove = cur, time.time()
+            elif time.time() - lastSimMove > 90:
+                verdict = "sim-stalled"; break
         hits = [l for l in txt.splitlines() if BAD.search(l)]
         if hits:
             bad = hits; verdict = "DEVICE-LOSS"; time.sleep(10); break
@@ -170,6 +189,13 @@ def main():
         subprocess.run(["cp", "-R", f"{DD}/LuaUI", f"{wd}/LuaUI"])
         job = os.path.dirname(os.path.abspath(__file__))
         shutil.copy(f"{job}/speclog.lua", f"{wd}/LuaUI/Widgets/speclog.lua")
+        shutil.copy(f"{job}/pauseprobe.lua", f"{wd}/LuaUI/Widgets/pauseprobe.lua")
+        shutil.copy(f"{job}/camsweep.lua", f"{wd}/LuaUI/Widgets/camsweep.lua")
+        if os.environ.get("SPEC_NO_OVERRIDES"):
+            for f in ("gui_healthbars_gl4.lua", "gfx_unit_stencil_gl4.lua", "gui_unit_firestate_icons.lua"):
+                p = f"{wd}/LuaUI/Widgets/{f}"
+                if os.path.exists(p): os.remove(p)
+            print("issue5 overrides removed")
         print("user LuaUI copied in")
     lob = Lobby(f"{wd}/lobby.log")
     lob.login()
@@ -206,7 +232,7 @@ def main():
             if "adding user vandomas as spectator" in low or "already been added" in low:
                 authed = True
                 if age is not None: break
-        if authed and args.minage and (age or 0) < args.minage:
+        if authed and args.minage and age is not None and age < args.minage:
             print(f"attempt {attempt}: game age {age}min < {args.minage}min, skipping")
             lob.send("LEAVEBATTLE"); continue
         if age is not None: print(f"  game age: {age} min")
@@ -219,13 +245,27 @@ def main():
         script = f"{wd}/script.txt"
         open(script, "w").write("[GAME]\n{\n" f"HostIP={b['ip']};\nHostPort={b['port']};\n"
             "MyPlayerName=Vandomas;\n" f"MyPasswd={sp};\n" "IsHost=0;\n}\n")
-        if args.mvkdebug: os.environ["MVK_CONFIG_DEBUG"] = "1"
+        if args.mvkdebug:
+            os.environ["MVK_CONFIG_DEBUG"] = "1"
+            os.environ["MVK_CONFIG_LOG_LEVEL"] = "3"
         if args.shaderval:
             os.environ["MTL_SHADER_VALIDATION"] = "1"
             os.environ["MTL_SHADER_VALIDATION_REPORT_TO_STDERR"] = "1"
         verdict, bad, frames, alive = run_engine(wd, icd, args.pooling, script, args.minutes)
         lob.alive = False; time.sleep(6)  # stop pump before sync reads
         lob.alive = True
+        if verdict == "sim-stalled":
+            print(f"attempt {attempt}: the sim stopped advancing, run does not count, rejoining")
+            lob.send("LEAVEBATTLE")
+            for pth in (f"{wd}/infolog.txt",):
+                if os.path.exists(pth): os.rename(pth, f"{wd}/infolog-attempt{attempt}.txt")
+            continue
+        if verdict.startswith("engine-exited") and frames == 0 and not bad:
+            print(f"attempt {attempt}: {verdict} before first frame (connection timeout), retrying elsewhere")
+            lob.send("LEAVEBATTLE")
+            for pth in (f"{wd}/infolog.txt",):
+                if os.path.exists(pth): os.rename(pth, f"{wd}/infolog-attempt{attempt}.txt")
+            continue
         if verdict == "no-connect":
             print(f"attempt {attempt}: no-connect; recent lobby traffic:")
             for l in lob.tail[-15:]: print("   |", l)
