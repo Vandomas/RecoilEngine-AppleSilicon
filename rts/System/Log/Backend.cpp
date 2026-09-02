@@ -222,7 +222,9 @@ void log_backend_record(int level, const char* section, const char* fmt, va_list
 	// fopen), and holding the mutex across the sink call would deadlock.
 	bool emitRecord = true;
 	bool emitRollup = false;
-	int  rollupLevel = level;
+	// the rollup is bookkeeping for the log file, not something a player needs to
+	// read in the in-game console, so it goes out at debug level
+	int  rollupLevel = LOG_LEVEL_DEBUG;
 	char rollupMsg[192] = {0};
 	char rollupSection[64] = {0};
 	// stack frames differ only in their numbers, so the signature folds a whole
@@ -249,7 +251,6 @@ void log_backend_record(int level, const char* section, const char* fmt, va_list
 			if (++match->sinceRollup >= ROLLUP_EVERY) {
 				FormatRollup(rollupMsg, sizeof(rollupMsg), match->sinceRollup, match->section);
 				memcpy(rollupSection, match->section, sizeof(rollupSection));
-				rollupLevel = match->level;
 				emitRollup = true;
 				match->sinceRollup = 0;
 			}
@@ -265,7 +266,6 @@ void log_backend_record(int level, const char* section, const char* fmt, va_list
 			if (victim->used && victim->sinceRollup > 0) {
 				FormatRollup(rollupMsg, sizeof(rollupMsg), victim->sinceRollup, victim->section);
 				memcpy(rollupSection, victim->section, sizeof(rollupSection));
-				rollupLevel = victim->level;
 				emitRollup = true;
 			}
 			memcpy(victim->sig, sig, sizeof(victim->sig));
