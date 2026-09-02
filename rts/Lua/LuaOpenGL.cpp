@@ -457,6 +457,8 @@ bool LuaOpenGL::PushEntries(lua_State* L)
 	REGISTER_LUA_CFUNC(ReadPixels);
 	REGISTER_LUA_CFUNC(SaveImage);
 
+	REGISTER_LUA_CFUNC(GPUStamp);
+
 	if (GLAD_GL_ARB_occlusion_query) {
 		REGISTER_LUA_CFUNC(CreateQuery);
 		REGISTER_LUA_CFUNC(DeleteQuery);
@@ -6660,6 +6662,21 @@ int LuaOpenGL::SaveImage(lua_State* L)
  * @function gl.CreateQuery
  * @return any query
  */
+/***
+ * Closes a GPU timing segment, see the GPUTimers config setting. The time the
+ * GPU spent since the previous stamp shows up as the profiler zone GPU::<label>.
+ *
+ * @function gl.GPUStamp
+ * @param label string
+ */
+int LuaOpenGL::GPUStamp(lua_State* L)
+{
+	CheckDrawingEnabled(L, __func__);
+	globalRendering->GPUStamp(luaL_checkstring(L, 1));
+	return 0;
+}
+
+
 int LuaOpenGL::CreateQuery(lua_State* L)
 {
 	GLuint id;

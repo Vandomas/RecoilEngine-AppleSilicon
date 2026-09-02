@@ -29,6 +29,7 @@
 // nor compatible with this Objective-C++ TU
 #include <glad/glad.h>
 #include "System/Config/ConfigHandler.h"
+#include "Rendering/GlobalRendering.h"
 #include "System/Log/ILog.h"
 #include "System/Misc/SpringTime.h"
 #include "System/Platform/errorhandler.h"
@@ -1167,6 +1168,7 @@ bool DirectPresentFrame(int rdW, int rdH, GLenum readFormat, int lagFrames)
 	if (dpFence[cur] != nullptr)
 		glDeleteSync(dpFence[cur]);
 	dpFence[cur] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+	globalRendering->GPUStamp("Present::Pack", true);
 	glFlush(); // submit the pack now; otherwise it rides the NEXT frame's flush
 
 	bool presented = true;

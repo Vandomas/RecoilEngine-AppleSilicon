@@ -46,6 +46,7 @@
 #include "Game/UI/GuiHandler.h"
 #include "System/EventHandler.h"
 #include "System/Exceptions.h"
+#include "Rendering/GlobalRendering.h"
 #include "System/TimeProfiler.h"
 #include "System/SafeUtil.h"
 #include "System/Log/ILog.h"
@@ -251,6 +252,7 @@ void CWorldDrawer::GenerateIBLTextures() const
 
 		game->SetDrawMode(CGame::gameShadowDraw);
 		shadowHandler.CreateShadows();
+		globalRendering->GPUStamp("Shadows", true);
 		game->SetDrawMode(CGame::gameNormalDraw);
 	}
 
@@ -310,6 +312,7 @@ void CWorldDrawer::Draw() const
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	camera->Update();
+	globalRendering->GPUStamp("WorldTextures", true);
 
 	DrawOpaqueObjects();
 	DrawAlphaObjects();
@@ -317,11 +320,13 @@ void CWorldDrawer::Draw() const
 		SCOPED_TIMER("Draw::World::DrawWorld");
 		SCOPED_GL_DEBUGGROUP("Draw::World::DrawWorld");
 		eventHandler.DrawWorld();
+		globalRendering->GPUStamp("Lua::DrawWorld", true);
 	}
 
 
 	DrawMiscObjects();
 	DrawBelowWaterOverlay();
+	globalRendering->GPUStamp("WorldMisc", true);
 
 	glDisable(GL_FOG);
 }
@@ -337,6 +342,7 @@ void CWorldDrawer::DrawOpaqueObjects() const
 			SCOPED_GL_DEBUGGROUP("Draw::World::Terrain");
 			gd->Draw(DrawPass::Normal);
 			depthBufferCopy->MakeDepthBufferCopy();
+			globalRendering->GPUStamp("Terrain", true);
 		}
 		{
 			eventHandler.DrawPreDecals();
@@ -344,6 +350,7 @@ void CWorldDrawer::DrawOpaqueObjects() const
 			SCOPED_GL_DEBUGGROUP("Draw::World::Decals");
 			groundDecals->Draw();
 			projectileDrawer->DrawGroundFlashes();
+			globalRendering->GPUStamp("Decals", true);
 		}
 		{
 			SCOPED_TIMER("Draw::World::Foliage");
@@ -361,17 +368,20 @@ void CWorldDrawer::DrawOpaqueObjects() const
 
 	selectedUnitsHandler.Draw();
 	eventHandler.DrawWorldPreUnit();
+	globalRendering->GPUStamp("Lua::DrawWorldPreUnit", true);
 
 	{
 		SCOPED_TIMER("Draw::World::Models::Opaque");
 		SCOPED_GL_DEBUGGROUP("Draw::World::Models::Opaque");
 		unitDrawer->Draw(false);
 		featureDrawer->Draw(false);
+		globalRendering->GPUStamp("Models::Opaque", true);
 	}
 	{
 		SCOPED_TIMER("Draw::World::Models::Projectiles");
 		SCOPED_GL_DEBUGGROUP("Draw::World::Models::Projectiles");
 		projectileDrawer->DrawOpaque(false);
+		globalRendering->GPUStamp("Projectiles", true);
 	}
 	{
 		SCOPED_TIMER("Draw::OpaqueObjects::Debug");
@@ -408,11 +418,13 @@ void CWorldDrawer::DrawAlphaObjects() const
 		// draw alpha-objects below water surface (farthest)
 		unitDrawer->DrawAlphaPass(false);
 		featureDrawer->DrawAlphaPass(false);
+		globalRendering->GPUStamp("Models::Alpha", true);
 	}
 	{
 		SCOPED_TIMER("Draw::World::Particles");
 		SCOPED_GL_DEBUGGROUP("Draw::World::Particles");
 		projectileDrawer->DrawAlpha(!hasWaterRendering, true, false, false);
+		globalRendering->GPUStamp("Particles", true);
 
 		if (hasWaterRendering)
 			glDisable(GL_CLIP_PLANE3);
@@ -433,6 +445,7 @@ void CWorldDrawer::DrawAlphaObjects() const
 		}
 		water->Draw();
 		eventHandler.DrawWaterPost();
+		globalRendering->GPUStamp("Water", true);
 	}
 
 	{
@@ -447,11 +460,13 @@ void CWorldDrawer::DrawAlphaObjects() const
 		// draw alpha-objects above water surface (closest)
 		unitDrawer->DrawAlphaPass(false);
 		featureDrawer->DrawAlphaPass(false);
+		globalRendering->GPUStamp("Models::Alpha", true);
 	}
 	{
 		SCOPED_TIMER("Draw::World::Particles");
 		SCOPED_GL_DEBUGGROUP("Draw::World::Particles");
 		projectileDrawer->DrawAlpha(true, false, false, false);
+		globalRendering->GPUStamp("Particles", true);
 
 		glDisable(GL_CLIP_PLANE3);
 	}

@@ -71,6 +71,8 @@ CONFIG(int, ForceDisableGL4).defaultValue(0).safemodeValue(1).minimumValue(0).ma
 
 CONFIG(int, ForceCoreContext).defaultValue(0).minimumValue(0).maximumValue(1);
 CONFIG(int, ForceSwapBuffers).defaultValue(1).minimumValue(0).maximumValue(1);
+CONFIG(int, GPUTimers).defaultValue(0).minimumValue(0).maximumValue(1).description("Time the GPU per render pass with timestamp queries and expose the results as GPU::* profiler zones.");
+CONFIG(int, GPUTimersSplitPasses).defaultValue(0).minimumValue(0).maximumValue(1).description("Force a render pass boundary at every engine GPU timer stamp. Needed on tile-based GPUs to attribute time per pass, costs extra attachment loads and stores.");
 CONFIG(int, AtiHacks).defaultValue(-1).headlessValue(0).minimumValue(-1).maximumValue(1).description("Enables graphics drivers workarounds for users with AMD proprietary drivers.\n -1:=runtime detect, 0:=off, 1:=on");
 
 // enabled in safemode, far more likely the gpu runs out of memory than this extension causes crashes!
@@ -731,6 +733,9 @@ void CGlobalRendering::PostInit() {
 	UniformConstants::GetInstance().Init();
 	ModelUniformData::Init();
 	glGenQueries(glTimerQueries.size(), glTimerQueries.data());
+	gpuTimersEnabled = (GLAD_GL_ARB_timer_query != 0) && (configHandler->GetInt("GPUTimers") != 0);
+	gpuTimersOverlay = false;
+	gpuTimersSplit = gpuTimersEnabled && (GLAD_GL_ARB_texture_barrier != 0) && (configHandler->GetInt("GPUTimersSplitPasses") != 0);
 	RenderBuffer::InitStatic();
 	GL::shapes.Init();
 
@@ -819,40 +824,91 @@ void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)
 	globalRendering->lastSwapBuffersEnd = spring_now();
 }
 
-void CGlobalRendering::SetGLTimeStamp(uint32_t queryIdx) const
+void CGlobalRendering::GPUStamp(const char* label, bool splitPass)
 {
-	if (!GLAD_GL_ARB_timer_query)
+	if (!gpuTimersEnabled && !gpuTimersOverlay)
 		return;
 
-	glQueryCounter(glTimerQueries[(NUM_OPENGL_TIMER_QUERIES * (drawFrame & 1)) + queryIdx], GL_TIMESTAMP);
+	const uint32_t slot = drawFrame % GPU_STAMP_FRAMES;
+	uint32_t& n = gpuStampCounts[slot];
+
+	if (n >= GPU_STAMPS_PER_FRAME)
+		return;
+
+	// zink keeps one render pass open across fbo-less draws, and MoltenVK samples a
+	// timestamp only when the Metal encoder ends, so without this every stamp inside
+	// the pass reads the same value and the whole pass lands on the last one
+	if (splitPass && gpuTimersSplit)
+		glTextureBarrier();
+
+	glQueryCounter(glTimerQueries[slot * GPU_STAMPS_PER_FRAME + n], GL_TIMESTAMP);
+	gpuStampLabels[slot][n] = std::string("GPU::") + label;
+	n += 1;
 }
 
-uint64_t CGlobalRendering::CalcGLDeltaTime(uint32_t queryIdx0, uint32_t queryIdx1) const
+void CGlobalRendering::CollectGPUStamps()
 {
-	if (!GLAD_GL_ARB_timer_query)
-		return 0;
+	if (!gpuTimersEnabled && !gpuTimersOverlay)
+		return;
 
-	const uint32_t queryBase = NUM_OPENGL_TIMER_QUERIES * (1 - (drawFrame & 1));
+	// this frame is about to reuse the slot written GPU_STAMP_FRAMES frames ago.
+	// results that are still not available are dropped rather than waited for,
+	// a timer must not add a stall of its own
+	const uint32_t slot = drawFrame % GPU_STAMP_FRAMES;
+	uint32_t& n = gpuStampCounts[slot];
 
-	assert(queryIdx0 < NUM_OPENGL_TIMER_QUERIES);
-	assert(queryIdx1 < NUM_OPENGL_TIMER_QUERIES);
-	assert(queryIdx0 < queryIdx1);
-
-	GLuint64 t0 = 0;
-	GLuint64 t1 = 0;
-
-	GLint res = 0;
-
-	// results from the previous frame should already (or soon) be available
-	while (!res) {
-		glGetQueryObjectiv(glTimerQueries[queryBase + queryIdx1], GL_QUERY_RESULT_AVAILABLE, &res);
+	if (n < 2) {
+		n = 0;
+		return;
 	}
 
-	glGetQueryObjectui64v(glTimerQueries[queryBase + queryIdx0], GL_QUERY_RESULT, &t0);
-	glGetQueryObjectui64v(glTimerQueries[queryBase + queryIdx1], GL_QUERY_RESULT, &t1);
+	const uint32_t* queries = &glTimerQueries[slot * GPU_STAMPS_PER_FRAME];
+	GLint available = 0;
+	glGetQueryObjectiv(queries[n - 1], GL_QUERY_RESULT_AVAILABLE, &available);
 
-	// nanoseconds between timestamps
-	return (t1 - t0);
+	if (available) {
+		auto& profiler = CTimeProfiler::GetInstance();
+		const spring_time now = spring_now();
+		// a driver may hand back 0 or a stale value for a stamp it could not sample
+		// (MoltenVK only samples at encoder boundaries), such a stamp is skipped and
+		// its work lands in the next segment that does have a reading
+		GLuint64 prev = 0;
+		GLuint64 first = 0;
+		uint32_t skipped = 0;
+
+		for (uint32_t i = 0; i < n; i++) {
+			GLuint64 t = 0;
+			glGetQueryObjectui64v(queries[i], GL_QUERY_RESULT, &t);
+
+			if (t == 0 || t < prev) {
+				skipped += 1;
+				continue;
+			}
+			if (first == 0) {
+				first = prev = t;
+				continue;
+			}
+
+			const std::string& name = gpuStampLabels[slot][i];
+			if (gpuStampNames.insert(name).second)
+				CTimeProfiler::RegisterTimer(name.c_str());
+
+			// special timer: recorded even while the profiler overlay is off
+			profiler.AddTime(hashString(name.c_str()), now, spring_time::fromNanoSecs(t - prev), false, true, false);
+			prev = t;
+		}
+
+		gpuFrameTimeNs = prev - first;
+		gpuStampsSkipped += skipped;
+
+		static bool loggedOnce = false;
+		if (!loggedOnce && (drawFrame > 300)) {
+			loggedOnce = true;
+			LOG("[GPUTimers] %u stamps per frame, %u unreadable so far", n, gpuStampsSkipped);
+		}
+	}
+
+	n = 0;
 }
 
 

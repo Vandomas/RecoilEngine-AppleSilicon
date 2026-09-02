@@ -54,8 +54,16 @@ public:
 
 	void SwapBuffers(bool allowSwapBuffers, bool clearErrors);
 
-	void SetGLTimeStamp(uint32_t queryIdx) const;
-	uint64_t CalcGLDeltaTime(uint32_t queryIdx0, uint32_t queryIdx1) const;
+	// gpu zone timers: a timestamp query per stamp, read back a few frames later and
+	// fed into the profiler as GPU::<label> records. a stamp closes the segment that
+	// started at the previous stamp, so label it after the work it measures
+	// splitPass closes the current render pass first (GPUTimersSplitPasses), so
+	// drivers that only sample at encoder boundaries attribute the work correctly
+	void GPUStamp(const char* label, bool splitPass = false);
+	void CollectGPUStamps();
+	// the debug overlay wants the stamps too while it is up
+	void SetGPUTimersOverlay(bool b) { gpuTimersOverlay = b; }
+	uint64_t GetGPUFrameTimeNs() const { return gpuFrameTimeNs; }
 
 	void MakeCurrentContext(bool clear) const;
 
@@ -440,9 +448,8 @@ public:
 	//minimum window resolution in non-fullscreen mode
 	static constexpr int2 minRes = { 400, 400 };
 
-	static constexpr uint32_t NUM_OPENGL_TIMER_QUERIES = 8;
-	static constexpr uint32_t FRAME_REF_TIME_QUERY_IDX = 0;
-	static constexpr uint32_t FRAME_END_TIME_QUERY_IDX = NUM_OPENGL_TIMER_QUERIES - 1;
+	static constexpr uint32_t GPU_STAMP_FRAMES = 4;
+	static constexpr uint32_t GPU_STAMPS_PER_FRAME = 256;
 private:
 	void SetMinSampleShadingRate();
 	bool SetWindowMinMaximized(bool maximize) const;
@@ -451,8 +458,16 @@ private:
 	/// suffix can be re-applied on every resize without compounding.
 	std::string windowTitleBase;
 	spring::unordered_set<std::string> glExtensions;
-	// double-buffered; results from frame N become available on frame N+1
-	std::array<uint32_t, NUM_OPENGL_TIMER_QUERIES * 2> glTimerQueries;
+	// one ring slot per frame in flight; a slot is read out right before it is reused
+	std::array<uint32_t, GPU_STAMP_FRAMES * GPU_STAMPS_PER_FRAME> glTimerQueries;
+	std::array<std::array<std::string, GPU_STAMPS_PER_FRAME>, GPU_STAMP_FRAMES> gpuStampLabels;
+	std::array<uint32_t, GPU_STAMP_FRAMES> gpuStampCounts = {};
+	spring::unordered_set<std::string> gpuStampNames;
+	uint64_t gpuFrameTimeNs = 0;
+	uint32_t gpuStampsSkipped = 0;
+	bool gpuTimersEnabled = false;
+	bool gpuTimersOverlay = false;
+	bool gpuTimersSplit = false;
 private:
 	static constexpr inline const char* xsKeys[2] = { "XResolutionWindowed", "XResolution" };
 	static constexpr inline const char* ysKeys[2] = { "YResolutionWindowed", "YResolution" };
