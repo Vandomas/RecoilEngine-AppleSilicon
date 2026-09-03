@@ -10,6 +10,7 @@
 #include <mutex>
 
 #include "Backend.h"
+#include "Level.h"
 #include "DefaultFilter.h"
 #include "LogUtil.h"
 #include "System/MainDefines.h"
