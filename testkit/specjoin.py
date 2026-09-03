@@ -125,7 +125,9 @@ def run_engine(wd, icd, pooling, script, minutes):
         MVK_CONFIG_LOG_LEVEL=os.environ.get("MVK_CONFIG_LOG_LEVEL", "1"),
         DYLD_FALLBACK_LIBRARY_PATH=f"{APP}/Contents/Frameworks",
         SPRING_DATADIR=f"{APP}/Contents/Resources",
-        MVK_CONFIG_USE_COMMAND_POOLING=pooling)
+        MVK_CONFIG_USE_COMMAND_POOLING=pooling,
+        # the launcher turns argument buffers off, run the same configuration the user plays
+        MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=os.environ.get("MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS", "0"))
     errlog = open(f"{wd}/stderr.log", "wb")
     proc = subprocess.Popen([f"{APP}/Contents/MacOS/spring", "--write-dir", wd, "-window", script],
                             env=env, stdout=errlog, stderr=subprocess.STDOUT)
