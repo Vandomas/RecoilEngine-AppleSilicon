@@ -15,6 +15,7 @@ do
 	if f then
 		for k, v in f:gmatch("(%w+)=([%-%.%d]+)") do cfg[k] = tonumber(v) end
 		cfg.disable = f:match("disable=([^\n]+)")
+		cfg.skipMode = f:match("skipMode=(%a+)")
 	end
 end
 
@@ -36,7 +37,13 @@ function widget:Update(dt)
 	-- 1x (12774 of 370173 chunks before NETMSG_STARTPLAYING). Warp through it.
 	if not warped then
 		warped = true
-		Spring.SendCommands("setspeed " .. cfg.preSpeed)
+		-- "skip" jumps like a client joining a running game: frames are simulated with
+		-- no draws in between, then rendering resumes on a world that was built in a burst
+		if cfg.skipMode == "skip" and cfg.skipTo > 0 then
+			Spring.SendCommands("skip " .. cfg.skipTo)
+		else
+			Spring.SendCommands("setspeed " .. cfg.preSpeed)
+		end
 	end
 
 	local gf = Spring.GetGameFrame()

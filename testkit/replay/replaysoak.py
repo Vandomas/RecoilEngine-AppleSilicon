@@ -50,6 +50,26 @@ def make_wd(tag, args):
         shutil.copy(f"{HERE}/hoverprobe.lua", f"{wd}/LuaUI/Widgets/hoverprobe.lua")
     if args.hexprobe:
         shutil.copy(f"{HERE}/hexprobe.lua", f"{wd}/LuaUI/Widgets/hexprobe.lua")
+    for f in args.override:
+        # keep Shaders/ files under LuaUI/Shaders, everything else is a widget
+        sub = "Shaders" if os.path.basename(os.path.dirname(f)) == "Shaders" else "Widgets"
+        os.makedirs(f"{wd}/LuaUI/{sub}", exist_ok=True)
+        shutil.copy(f, f"{wd}/LuaUI/{sub}/{os.path.basename(f)}")
+    if args.shotat:
+        shutil.copy(f"{HERE}/shotat.lua", f"{wd}/LuaUI/Widgets/shotat.lua")
+    if args.savepause:
+        shutil.copy(f"{HERE}/savepause.lua", f"{wd}/LuaUI/Widgets/savepause.lua")
+    if args.blink:
+        shutil.copy(f"{HERE}/blinkprobe.lua", f"{wd}/LuaUI/Widgets/blinkprobe.lua")
+    if args.wraptest:
+        shutil.copy(f"{HERE}/wraptest.lua", f"{wd}/LuaUI/Widgets/wraptest.lua")
+        os.makedirs(f"{wd}/LuaUI/Include", exist_ok=True)
+        shutil.copy(args.wraptest, f"{wd}/LuaUI/Include/chat_emoji.lua")
+    if args.fantest:
+        shutil.copy(f"{HERE}/fantest.lua", f"{wd}/LuaUI/Widgets/fantest.lua")
+        shutil.copy(f"{HERE}/vaofan.lua", f"{wd}/LuaUI/Widgets/vaofan.lua")
+    if args.compareat:
+        shutil.copy(f"{HERE}/camcompare.lua", f"{wd}/LuaUI/Widgets/camcompare.lua")
     if args.perflog:
         shutil.copy(f"{HERE}/perflog.lua", f"{wd}/LuaUI/Widgets/perflog.lua")
     if args.luaprof:
@@ -64,7 +84,13 @@ def make_wd(tag, args):
         f"endFrame={args.endframe} pauseFrom={args.pausefrom} pauseTo={args.pauseto} "
         f"camera={0 if args.nocamera else 1} skipTo={args.skipto}\n"
         + (f"disable={args.disable}\n" if args.disable else "")
-        + ("debug=1\n" if args.debugoverlay else ""))
+        + ("debug=1\n" if args.debugoverlay else "")
+        + (f"shotAt={args.shotat}\n" if args.shotat else "")
+        + (f"compareAt={args.compareat}\n" if args.compareat else "")
+        + (f"savePeriod={args.savepause}\n" if args.savepause else "")
+        + (f"blinkAt={args.blink}\n" if args.blink and "," in args.blink else "")
+        + ("hoverLoop=1\n" if args.hoverloop else "")
+        + (f"skipMode={args.skipmode}\n" if args.skipmode != "speed" else ""))
     return wd
 
 
@@ -146,7 +172,7 @@ def run(demo, wd, icd, args):
             bad, verdict = hits, "DEVICE-LOSS"
             time.sleep(10)
             break
-        if not started and time.time() - t0 > 240:
+        if not started and time.time() - t0 > args.loadwait:
             subprocess.run(["sample", str(proc.pid), "3", "-file", f"{wd}/sample.txt"], capture_output=True)
             verdict = "stuck-loading"
             break
@@ -187,11 +213,21 @@ def main():
     ap.add_argument("--nowidget", action="append", default=[])
     ap.add_argument("--userlua", action="store_true", default=True)
     ap.add_argument("--jitter", action="store_true", help="log the spread of frame deltas")
+    ap.add_argument("--hoverloop", action="store_true", help="with --hover: sweep for the whole run instead of quitting after one pass")
     ap.add_argument("--hover", action="store_true", help="sweep the cursor and screenshot each stop")
     ap.add_argument("--hexprobe", action="store_true", help="zoom onto each team start and screenshot the selection shapes")
     ap.add_argument("--perflog", action="store_true", help="write the engine profiler top zones to infolog every 5s")
     ap.add_argument("--luaprof", action="store_true", help="per-widget lua callin time to infolog every 5s")
     ap.add_argument("--env", action="append", default=[], help="extra KEY=VAL for the engine environment, repeatable")
+    ap.add_argument("--override", action="append", default=[], help="widget file to copy into the run's LuaUI/Widgets, shadowing the game's own")
+    ap.add_argument("--savepause", type=int, default=0, help="save then pause every N sim frames (0 = off)")
+    ap.add_argument("--blink", default="", help="park the cursor at this x,y screen fraction and shoot a burst")
+    ap.add_argument("--wraptest", default="", help="path to a chat_emoji.lua to exercise with the wrap probe")
+    ap.add_argument("--skipmode", default="speed", choices=["speed", "skip"], help="how --skipto gets there: warp speed, or the engine's /skip (no draws, like a mid-game join)")
+    ap.add_argument("--loadwait", type=int, default=240, help="seconds to allow for loading before calling the run stuck")
+    ap.add_argument("--fantest", action="store_true", help="draw a triangle-fan vs triangle-list comparison overlay")
+    ap.add_argument("--compareat", type=int, default=0, help="pause at this sim frame and shoot a fixed set of camera poses")
+    ap.add_argument("--shotat", default="", help="comma separated sim frames to screenshot from a fixed camera")
     ap.add_argument("--debugoverlay", action="store_true", help="turn the /debug overlay on so the detailed cpu zones tick")
     ap.add_argument("--disable", default="", help="widget names to /luaui disablewidget at game start, ';' separated")
     ap.add_argument("--mvkperf", action="store_true", help="MoltenVK performance summary at exit (needs log level 3)")

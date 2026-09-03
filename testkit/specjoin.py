@@ -5,7 +5,9 @@ import socket, hashlib, base64, sys, time, re, os, subprocess, threading, secret
 HOST, PORT = "server4.beyondallreason.info", 8200
 DD = os.path.expanduser("~/Library/Application Support/Beyond-All-Reason-mac")
 APP = os.environ.get("SPEC_APP", "/Applications/BAR Launcher.app")
-BAD = re.compile(r"mvk-error|DEVICE LOST|Invalid Resource|Lost VkDevice|OUT_OF_DEVICE", re.I)
+BAD = re.compile(r"mvk-error|DEVICE LOST|Lost VkDevice", re.I)
+# with MVK_CONFIG_RESUME_LOST_DEVICE=1 a fault is logged as a warning and the game goes on; count those, do not stop
+RESUMED = re.compile(r"Resumed VkDevice", re.I)
 CONNECTED = re.compile(r"GameData|Using map|Connection established|serverMessage|PlayerName", re.I)
 
 def local_map(name):
@@ -111,6 +113,8 @@ def make_wd(tag):
     shutil.copy(f"{job}/speclog.lua", f"{wd}/LuaUI/Widgets/speclog.lua")
     shutil.copy(f"{job}/pauseprobe.lua", f"{wd}/LuaUI/Widgets/pauseprobe.lua")
     shutil.copy(f"{job}/camsweep.lua", f"{wd}/LuaUI/Widgets/camsweep.lua")
+    if os.environ.get("SPEC_HOVER"):
+        shutil.copy(f"{job}/hoverhunt.lua", f"{wd}/LuaUI/Widgets/hoverhunt.lua")
     return wd
 
 def run_engine(wd, icd, pooling, script, minutes):
@@ -175,6 +179,7 @@ def main():
     ap.add_argument("--userlua", action="store_true")
     ap.add_argument("--shaderval", action="store_true")
     ap.add_argument("--minage", type=int, default=0)
+    ap.add_argument("--maxage", type=int, default=0, help="skip games older than this many minutes, so the run is not cut short by the game ending")
     ap.add_argument("--mappref", default="")
     args = ap.parse_args()
 
@@ -189,6 +194,8 @@ def main():
         subprocess.run(["cp", "-R", f"{DD}/LuaUI", f"{wd}/LuaUI"])
         job = os.path.dirname(os.path.abspath(__file__))
         shutil.copy(f"{job}/speclog.lua", f"{wd}/LuaUI/Widgets/speclog.lua")
+        if os.environ.get("SPEC_HOVER"):
+            shutil.copy(f"{job}/hoverhunt.lua", f"{wd}/LuaUI/Widgets/hoverhunt.lua")
         shutil.copy(f"{job}/pauseprobe.lua", f"{wd}/LuaUI/Widgets/pauseprobe.lua")
         shutil.copy(f"{job}/camsweep.lua", f"{wd}/LuaUI/Widgets/camsweep.lua")
         if os.environ.get("SPEC_NO_OVERRIDES"):
@@ -232,6 +239,9 @@ def main():
             if "adding user vandomas as spectator" in low or "already been added" in low:
                 authed = True
                 if age is not None: break
+        if authed and args.maxage and age is not None and age > args.maxage:
+            print(f"attempt {attempt}: game age {age}min > {args.maxage}min, skipping")
+            lob.send("LEAVEBATTLE"); continue
         if authed and args.minage and age is not None and age < args.minage:
             print(f"attempt {attempt}: game age {age}min < {args.minage}min, skipping")
             lob.send("LEAVEBATTLE"); continue
@@ -273,7 +283,11 @@ def main():
             for p in (f"{wd}/infolog.txt",):
                 if os.path.exists(p): os.rename(p, f"{wd}/infolog-attempt{attempt}.txt")
             continue
-        print(f"VERDICT {verdict} tag={args.tag} battle={bid} map={b['map']!r} alive={alive:.0f}s lastframe={frames}")
+        try:
+            resumed = len(RESUMED.findall(open(f"{wd}/stderr.log", errors="replace").read()))
+        except OSError:
+            resumed = 0
+        print(f"VERDICT {verdict} tag={args.tag} battle={bid} map={b['map']!r} alive={alive:.0f}s lastframe={frames} resumed={resumed}")
         for l in bad[:8]: print("  BAD:", l)
         info = f"/tmp/specjoin-{args.tag}/infolog.txt"
         if os.path.exists(info):

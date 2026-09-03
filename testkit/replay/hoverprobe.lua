@@ -33,7 +33,11 @@ function widget:Update()
 		return
 	end
 	idx = idx + 1
-	if idx > #stops then Spring.Echo("HOVER done"); Spring.SendCommands("quitforce"); return end
+	if idx > #stops then
+		-- keep sweeping for the whole run when asked, the soak wants the cursor busy throughout
+		local f = VFS.LoadFile("LuaUI/rsoak.txt") or ""
+		if f:find("hoverLoop=1") then idx = 1; Spring.Echo("HOVER loop") else Spring.Echo("HOVER done"); Spring.SendCommands("quitforce"); return end
+	end
 	Spring.WarpMouse(stops[idx][1], stops[idx][2])
 	shot = true
 end
