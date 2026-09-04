@@ -2,6 +2,7 @@
 layout(local_size_x = 1) in;
 layout(set = 0, binding = 0) buffer B { uint x; } b;
 void main() {
-	// counts to the top of a uint, seconds of gpu time, which Metal reports as a hang
-	while (b.x != 0xFFFFFFFFu) { b.x++; }
+	// atomics cannot be folded or hoisted, so this really runs 2^32 round trips to memory:
+	// minutes of gpu time, which Metal reports as a hang long before the end
+	while (atomicAdd(b.x, 1u) != 0xFFFFFFFFu) { }
 }
