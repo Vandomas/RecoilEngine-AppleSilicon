@@ -1,0 +1,59 @@
+From 06777cd1068db7e58e6d7447c23e68d463338094 Mon Sep 17 00:00:00 2001
+From: Vandomas <vandcim@gmail.com>
+Date: Fri, 4 Sep 2026 14:57:47 +0300
+Subject: [PATCH] Exit the process on device loss when asked to
+
+MVK_EXIT_ON_DEVICE_LOSS=1 ends the process after the loss is logged. zink cannot report a lost device to a GL app without reset notification, so the app keeps drawing on a dead gpu and grows until the host runs out of memory. The encoder list that names the faulting pass now logs at error level, so a warning-level log keeps it.
+---
+ MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm | 20 ++++++++++++++++----
+ 1 file changed, 16 insertions(+), 4 deletions(-)
+
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm b/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
+index 3372fb13..7e9f8d5b 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
+@@ -21,6 +21,7 @@
+ #include "MVKSurface.h"
+ #include "MVKSwapchain.h"
+ #include "MVKSync.h"
++#include <unistd.h>
+ #include "MVKFoundation.h"
+ #include "MVKOSExtensions.h"
+ #include "MVKGPUCapture.h"
+@@ -257,14 +258,16 @@
+ 				 (mtlCmdBuff.label ? mtlCmdBuff.label.UTF8String : ""),
+ 				 mtlCmdBuff.error.code, mtlCmdBuff.error.localizedDescription.UTF8String);
+ 
++	// the encoder list names the pass that faulted, which is the one thing worth having
++	// from a user's log, so it goes out at the same level as the loss itself
+ 	if (NSArray<id<MTLCommandBufferEncoderInfo>>* mtlEncInfo = mtlCmdBuff.error.userInfo[MTLCommandBufferEncoderInfoErrorKey]) {
+-		MVKLogInfo("Encoders for %p \"%s\":", mtlCmdBuff, mtlCmdBuff.label ? mtlCmdBuff.label.UTF8String : "");
++		MVKLogError("Encoders for %p \"%s\":", mtlCmdBuff, mtlCmdBuff.label ? mtlCmdBuff.label.UTF8String : "");
+ 		for (id<MTLCommandBufferEncoderInfo> enc in mtlEncInfo) {
+-			MVKLogInfo(" - %s: %s", enc.label.UTF8String, mvkStringFromMTLCommandEncoderErrorState(enc.errorState));
++			MVKLogError(" - %s: %s", enc.label.UTF8String, mvkStringFromMTLCommandEncoderErrorState(enc.errorState));
+ 			if (enc.debugSignposts.count > 0) {
+-				MVKLogInfo("   Debug signposts:");
++				MVKLogError("   Debug signposts:");
+ 				for (NSString* signpost in enc.debugSignposts) {
+-					MVKLogInfo("    - %s", signpost.UTF8String);
++					MVKLogError("    - %s", signpost.UTF8String);
+ 				}
+ 			}
+ 		}
+@@ -278,6 +281,15 @@
+ 		}
+ 		MVKLogInfo("%s", log.description.UTF8String);
+ 	}
++
++	// zink cannot tell a GL app that the device is gone (no reset notification), so the app
++	// keeps drawing on a dead gpu and grows until the host runs out of memory. when the
++	// environment asks for it, end the process here instead, after the loss is logged
++	if (markDeviceLoss && getenv("MVK_EXIT_ON_DEVICE_LOSS")) {
++		MVKLogError("Device lost and MVK_EXIT_ON_DEVICE_LOSS is set, exiting.");
++		fflush(stderr);
++		_exit(70);
++	}
+ }
+ 
+ #pragma mark Construction

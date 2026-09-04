@@ -110,6 +110,12 @@ if [ "$ICD" = "$MVK_ICD" ]; then
   # the gpu faults on it mid game. binding straight to the encoders instead
   # survived every run and is faster here anyway
   export MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0
+  # a lost device cannot reach the engine through GL, and a game that keeps
+  # drawing on a dead gpu grows until macOS runs out of memory. patches/moltenvk
+  # 0005 ends the process instead, code 70, and the loop below brings the menu
+  # back. debug mode is what makes MoltenVK name the pass that faulted
+  export MVK_EXIT_ON_DEVICE_LOSS=1
+  export MVK_CONFIG_DEBUG=1
 fi
 
 # MoltenVK ignores GL_COLOR_LOGIC_OP, so the inverted selection box draws solid.
@@ -546,6 +552,9 @@ fi
 # BAR_INFOLOG lets the engine's error dialog (Platform::MsgBox) attach the
 # full this-session log to any fatal it shows.
 export SPRING_DATADIR="$RES" BAR_INFOLOG="$WRITEDIR/infolog.txt" BAR_PORT_VERSION="$PORT_VERSION"
+# one previous launch of driver output is enough to keep; unrotated it grew
+# past 90 MB
+[ -f "$WRITEDIR/engine-stderr.log" ] && mv -f "$WRITEDIR/engine-stderr.log" "$WRITEDIR/engine-stderr.log.1"
 while :; do
   T0=$SECONDS
   "$HERE/spring" --write-dir "$WRITEDIR" --menu "$LOBBY_RAPID" "$@" 2>> "$WRITEDIR/engine-stderr.log"
@@ -557,8 +566,9 @@ while :; do
       exit 1;;
     # engine error exits, mod 256: CRASHED/-1003 -> 21, NOLOAD/1002 -> 234,
     # BADSAVE/1004 -> 236. The menu dies with the process on these (a failed
-    # savegame load quits the whole engine) — bring it back up.
-    21|234|236) ;;
+    # savegame load quits the whole engine) — bring it back up. 70 is MoltenVK
+    # ending the process on a lost gpu (MVK_EXIT_ON_DEVICE_LOSS above).
+    21|234|236|70) ;;
     *) exit "$RC";;
   esac
   # only resurrect sessions that got past startup, a menu that fails to boot
