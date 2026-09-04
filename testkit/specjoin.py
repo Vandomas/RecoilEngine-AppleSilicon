@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Join a running BAR battle as spectator with a chosen MoltenVK dylib, watch for device loss."""
-import socket, hashlib, base64, sys, time, re, os, subprocess, threading, secrets, argparse, glob, shutil
+import socket, hashlib, base64, sys, time, re, os, subprocess, threading, secrets, argparse, glob, gzip, shutil
 
 HOST, PORT = "server4.beyondallreason.info", 8200
 DD = os.path.expanduser("~/Library/Application Support/Beyond-All-Reason-mac")
@@ -12,6 +12,21 @@ CONNECTED = re.compile(r"GameData|Using map|Connection established|serverMessage
 
 def local_map(name):
     return bool(glob.glob(f"{DD}/maps/{glob.escape(name.lower().replace(' ', '_'))}.sd*"))
+
+def local_games():
+    # rapid's versions.gz maps every tag to "hash,,archive name"; the archive is installed
+    # when its package is in the pool. a battle on any other version would only put the
+    # engine's "Dependent archive not found" dialog on the screen
+    names = set()
+    for vf in glob.glob(f"{DD}/rapid/*/*/versions.gz"):
+        try:
+            for line in gzip.open(vf, "rt", errors="replace"):
+                parts = line.rstrip("\n").split(",", 3)
+                if len(parts) == 4 and os.path.exists(f"{DD}/packages/{parts[1]}.sdp"):
+                    names.add(parts[3].lower())
+        except OSError:
+            pass
+    return names
 
 class Lobby:
     def __init__(self, logpath):
@@ -66,16 +81,17 @@ class Lobby:
                 hw = s.split("\t")[0].split(" "); tabs = s.split("\t")
                 battles[hw[1]] = dict(founder=hw[4], ip=hw[5], port=hw[6],
                     passworded=hw[8], map=tabs[2] if len(tabs)>2 else "?",
-                    title=tabs[3] if len(tabs)>3 else "?", locked="0")
+                    title=tabs[3] if len(tabs)>3 else "?", game=tabs[4] if len(tabs)>4 else "?", locked="0")
             elif c == "UPDATEBATTLEINFO" and len(w) > 3 and w[1] in battles:
                 battles[w[1]]["locked"] = w[3]
             elif c == "JOINEDBATTLE": count[w[1]] = count.get(w[1], 0) + 1
             elif c == "LEFTBATTLE": count[w[1]] = max(0, count.get(w[1], 0) - 1)
             elif c == "CLIENTSTATUS": users[w[1]] = int(w[2])
         good = []
+        games = local_games()
         for bid, b in battles.items():
             st = users.get(b["founder"], 0)
-            if (st & 1) and b["passworded"] == "0" and b["locked"] == "0" and local_map(b["map"]):
+            if (st & 1) and b["passworded"] == "0" and b["locked"] == "0" and local_map(b["map"]) and b["game"].lower() in games:
                 good.append((count.get(bid, 0), bid, b))
         good.sort(reverse=True)
         return good
