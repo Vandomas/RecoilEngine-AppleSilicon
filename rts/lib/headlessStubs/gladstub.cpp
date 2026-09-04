@@ -72,6 +72,8 @@ int GLAD_GL_ARB_conservative_depth = 0;
 int GLAD_GL_ARB_clip_control = 0;
 int GLAD_GL_ARB_buffer_storage = 0;
 int GLAD_GL_KHR_debug = 0;
+int GLAD_GL_ARB_texture_barrier = 0;
+int GLAD_GL_KHR_robustness = 0;
 
 GLenum APIENTRY impl_glCheckFramebufferStatus(GLenum target) {
     return GL_FRAMEBUFFER_COMPLETE;
@@ -300,6 +302,9 @@ decltype(glad_glMaterialf) glad_glMaterialf = nullptr;
 decltype(glad_glMaterialfv) glad_glMaterialfv = nullptr;
 decltype(glad_glMatrixMode) glad_glMatrixMode = nullptr;
 decltype(glad_glMemoryBarrier) glad_glMemoryBarrier = nullptr;
+decltype(glad_glDebugMessageInsert) glad_glDebugMessageInsert = nullptr;
+decltype(glad_glTextureBarrier) glad_glTextureBarrier = nullptr;
+decltype(glad_glGetGraphicsResetStatus) glad_glGetGraphicsResetStatus = nullptr;
 decltype(glad_glMinSampleShading) glad_glMinSampleShading = nullptr;
 decltype(glad_glMultMatrixd) glad_glMultMatrixd = nullptr;
 decltype(glad_glMultMatrixf) glad_glMultMatrixf = nullptr;
@@ -740,6 +745,9 @@ int gladLoadGL(void) {
     glad_glMaterialfv = MakeStubImpl(glad_glMaterialfv);
     glad_glMatrixMode = MakeStubImpl(glad_glMatrixMode);
     glad_glMemoryBarrier = MakeStubImpl(glad_glMemoryBarrier);
+    glad_glDebugMessageInsert = MakeStubImpl(glad_glDebugMessageInsert);
+    glad_glTextureBarrier = MakeStubImpl(glad_glTextureBarrier);
+    glad_glGetGraphicsResetStatus = MakeStubImpl(glad_glGetGraphicsResetStatus);
     glad_glMinSampleShading = MakeStubImpl(glad_glMinSampleShading);
     glad_glMultMatrixd = MakeStubImpl(glad_glMultMatrixd);
     glad_glMultMatrixf = MakeStubImpl(glad_glMultMatrixf);
