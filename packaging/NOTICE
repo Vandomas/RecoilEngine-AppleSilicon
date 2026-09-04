@@ -9,7 +9,9 @@ text ships in this bundle as COPYING.
 Graphics driver: this bundle includes Mesa (Zink and KosmicKrisp, MIT
 license), built from a pinned upstream Mesa commit plus a small published
 patch series (see patches/mesa/ in the packaging repository). KosmicKrisp
-is developed by LunarG and Google within upstream Mesa.
+is developed by LunarG and Google within upstream Mesa. MoltenVK (Khronos
+Group, Apache-2.0) is built the same way, from a pinned upstream commit plus
+the patch series in patches/moltenvk/.
 
 Dynamically linked libraries and their licenses are enumerated in
 LICENSES/MANIFEST.tsv, with each license text in LICENSES/. In particular:
