@@ -390,12 +390,17 @@ cp "$MESA_PREFIX"/lib/libgallium*.dylib "$FRAMEWORKS/"
 if [ -f "$MESA_PREFIX/lib/libvulkan_kosmickrisp.dylib" ]; then
   cp "$MESA_PREFIX"/lib/libvulkan_kosmickrisp.dylib "$FRAMEWORKS/"
 fi
-# MoltenVK covers macOS before 26 and Intel Macs.
-MOLTENVK_LIB="${MOLTENVK_LIB:-/opt/homebrew/opt/molten-vk/lib/libMoltenVK.dylib}"
+# MoltenVK is built from a pinned upstream commit plus patches/moltenvk by
+# scripts/build-moltenvk.sh (a no-op when the driver is already current).
+# MOLTENVK_LIB overrides that with a ready dylib.
+if [ -z "${MOLTENVK_LIB:-}" ]; then
+  "$BAR/scripts/build-moltenvk.sh"
+  MOLTENVK_LIB="$BAR/deps/moltenvk-native/lib/libMoltenVK.dylib"
+fi
 if [ -f "$MOLTENVK_LIB" ]; then
   cp -L "$MOLTENVK_LIB" "$FRAMEWORKS/libMoltenVK.dylib"
 else
-  echo "FATAL: MoltenVK not found at $MOLTENVK_LIB (brew install molten-vk)"; exit 1
+  echo "FATAL: MoltenVK not found at $MOLTENVK_LIB"; exit 1
 fi
 # the Khronos Vulkan LOADER is a separate component (brew vulkan-loader) that
 # zink dlopens at runtime — dev machines silently supplied it from

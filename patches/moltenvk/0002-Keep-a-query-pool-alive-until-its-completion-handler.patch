@@ -1,0 +1,40 @@
+From f864d796722944e72c650add4c0fbe5123c0ddc9 Mon Sep 17 00:00:00 2001
+From: Vandomas <vandcim@gmail.com>
+Date: Wed, 2 Sep 2026 18:47:55 +0300
+Subject: [PATCH 2/4] Keep a query pool alive until its completion handler has
+ run
+
+finishQueries() registers a Metal completion handler holding raw pointers to the pools it will finish. The timeline semaphore the gpu signals from the same command buffer can be observed by the app before that handler runs, and an app that then destroys the pool is within the spec. zink does exactly this once a batch completes, and the handler dereferenced a freed pool. Retain the pool when its queries are recorded and release it from the handler.
+---
+ MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
+index 8c24debb..21b9b816 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
+@@ -1317,9 +1317,15 @@ static bool shouldStartNewEncoder(MVKCommandUse prev, MVKCommandUse next) {
+ // Marks the specified queries as activated
+ void MVKCommandEncoder::addActivatedQueries(MVKQueryPool* pQueryPool, uint32_t query, uint32_t queryCount) {
+     if ( !_pActivatedQueries ) { _pActivatedQueries = new MVKActivatedQueries(); }
++    auto& queries = (*_pActivatedQueries)[pQueryPool];
++    // the completion handler in finishQueries() runs on Metal's completion queue, which can
++    // lag behind the timeline semaphore the gpu signals from the same command buffer. an app
++    // that waits on that semaphore and then destroys the pool is within the spec, so hold the
++    // pool until the handler has finished with it
++    if (queries.empty()) { pQueryPool->retain(); }
+     uint32_t endQuery = query + queryCount;
+     while (query < endQuery) {
+-        (*_pActivatedQueries)[pQueryPool].push_back(query++);
++        queries.push_back(query++);
+     }
+ }
+ 
+@@ -1332,6 +1338,7 @@ static bool shouldStartNewEncoder(MVKCommandUse prev, MVKCommandUse next) {
+     [_mtlCmdBuffer addCompletedHandler: ^(id<MTLCommandBuffer> mtlCmdBuff) {
+         for (auto& qryPair : *pAQs) {
+             qryPair.first->finishQueries(qryPair.second.contents());
++            qryPair.first->release();
+         }
+         delete pAQs;
+     }];

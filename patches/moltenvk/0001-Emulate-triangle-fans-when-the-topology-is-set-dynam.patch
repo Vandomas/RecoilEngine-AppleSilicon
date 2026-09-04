@@ -1,0 +1,117 @@
+From ede88dea6fa7b02a0b8198072205afb938fb8596 Mon Sep 17 00:00:00 2001
+From: Vandomas <vandcim@gmail.com>
+Date: Wed, 2 Sep 2026 17:09:03 +0300
+Subject: [PATCH 1/4] Emulate triangle fans when the topology is set
+ dynamically
+
+The fan emulation keyed off the pipeline's static topology, but an app that makes topology dynamic leaves a different one there and calls vkCmdSetPrimitiveTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN) instead. That path only reached mvkMTLPrimitiveTypeFromVkPrimitiveTopology, which maps a fan onto MTLPrimitiveTypeTriangle, so the vertices were drawn as an unconverted triangle list. The encoder now remembers the topology it was given and the draw commands ask it, not the pipeline.
+---
+ MoltenVK/MoltenVK/Commands/MVKCmdDraw.mm       |  8 ++++----
+ MoltenVK/MoltenVK/Commands/MVKCmdRendering.mm  |  3 +++
+ MoltenVK/MoltenVK/Commands/MVKCommandBuffer.h  | 10 ++++++++++
+ MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm | 10 ++++++++++
+ 4 files changed, 27 insertions(+), 4 deletions(-)
+
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCmdDraw.mm b/MoltenVK/MoltenVK/Commands/MVKCmdDraw.mm
+index 0a06ff5e..f8e4b2d2 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCmdDraw.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCmdDraw.mm
+@@ -180,7 +180,7 @@
+ 	auto& dvcLimits = cmdEncoder->getDeviceProperties().limits;
+ 
+ 	// Metal doesn't support triangle fans, so encode it as triangles via an indexed indirect triangles command instead.
+-	if (pipeline->getVkPrimitiveTopology() == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN) {
++	if (cmdEncoder->getPrimitiveTopology() == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN) {
+ 		encodeIndexedIndirect(cmdEncoder);
+ 		return;
+ 	}
+@@ -454,7 +454,7 @@
+ 	auto& dvcLimits = cmdEncoder->getDeviceProperties().limits;
+ 
+ 	// Metal doesn't support triangle fans, so encode it as triangles via an indexed indirect triangles command instead.
+-	if (pipeline->getVkPrimitiveTopology() == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN) {
++	if (cmdEncoder->getPrimitiveTopology() == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN) {
+ 		encodeIndexedIndirect(cmdEncoder);
+ 		return;
+ 	}
+@@ -889,7 +889,7 @@ static void bindIndirectZeroDivisorVertexBuffers(MVKCommandEncoder* cmdEncoder,
+ 	auto& mtlFeats = cmdEncoder->getMetalFeatures();
+ 	auto& dvcLimits = cmdEncoder->getDeviceProperties().limits;
+ 	// Metal doesn't support triangle fans, so encode it as indexed indirect triangles instead.
+-	if (pipeline->getVkPrimitiveTopology() == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN) {
++	if (cmdEncoder->getPrimitiveTopology() == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN) {
+ 		encodeIndexedIndirect(cmdEncoder, indirectBuffer, indirectBufferOffset, indirectBufferStride);
+ 		return;
+ 	}
+@@ -1260,7 +1260,7 @@ static void bindIndirectZeroDivisorVertexBuffers(MVKCommandEncoder* cmdEncoder,
+ 	vtxAdjmts.mtlIndexType = ibb.mtlIndexType;
+ 	vtxAdjmts.isMultiView = (cmdEncoder->getSubpass()->isMultiview() &&
+ 							 cmdEncoder->getPhysicalDevice()->canUseInstancingForMultiview());
+-	vtxAdjmts.isTriangleFan = pipeline->getVkPrimitiveTopology() == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
++	vtxAdjmts.isTriangleFan = cmdEncoder->getPrimitiveTopology() == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
+ #if MVK_USE_METAL_PRIVATE_API
+ 	// With private APIs for primitive restart, we need to handle disabled restart and raw Uint8 indices.
+ 	vtxAdjmts.isPrimRestart = cmdEncoder->getState().vkGraphics().isPrimitiveRestartEnabled();
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCmdRendering.mm b/MoltenVK/MoltenVK/Commands/MVKCmdRendering.mm
+index df38d4bb..75bc4115 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCmdRendering.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCmdRendering.mm
+@@ -549,6 +549,9 @@ void mvkPopulateFromOrFillAscending(Vec& dst, const uint32_t* pSrc, size_t count
+ #pragma mark MVKCmdSetPrimitiveTopology
+ 
+ void MVKCmdSetPrimitiveTopology::encode(MVKCommandEncoder* cmdEncoder) {
++	// keep the vulkan topology as well: it does not survive the mapping to metal, which
++	// has no fan, and the draw commands need to see a fan to emulate one
++	cmdEncoder->_dynamicPrimitiveTopology = _value;
+ 	cmdEncoder->getState().updateDynamicState(MVKRenderStateFlag::PrimitiveTopology)._renderState.primitiveType = mvkMTLPrimitiveTypeFromVkPrimitiveTopology(_value);
+ }
+ 
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.h b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.h
+index 76ca7884..fbd4f39e 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.h
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.h
+@@ -508,6 +508,16 @@ public:
+ 	/** Indicates whether the current draw is an indexed draw. */
+ 	bool _isIndexedDraw;
+ 
++	/** The topology last set through vkCmdSetPrimitiveTopology(), if the pipeline made it dynamic. */
++	VkPrimitiveTopology _dynamicPrimitiveTopology = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
++
++	/**
++	 * The topology this draw actually uses: the dynamically set one where the pipeline
++	 * declares topology dynamic, the pipeline's own otherwise. Metal has no triangle fan,
++	 * so the draw commands emulate one, and they can only do that if they see a fan here.
++	 */
++	VkPrimitiveTopology getPrimitiveTopology();
++
+ #pragma mark Construction
+ 
+ 	MVKCommandEncoder(MVKCommandBuffer* cmdBuffer,
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
+index 8c24debb..ceb95139 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm
+@@ -429,6 +429,7 @@
+     _renderSubpassIndex = 0;
+     _multiviewPassIndex = 0;
+     _canUseLayeredRendering = false;
++	_dynamicPrimitiveTopology = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
+ 
+     _mtlCmdBuffer = mtlCmdBuff;        // not retained
+ 
+@@ -1235,6 +1236,15 @@ static bool shouldStartNewEncoder(MVKCommandUse prev, MVKCommandUse next) {
+     _occlusionQueryState.endOcclusionQuery(this, pQueryPool, query);
+ }
+ 
++VkPrimitiveTopology MVKCommandEncoder::getPrimitiveTopology() {
++	auto* pipeline = getGraphicsPipeline();
++	if ( !pipeline ) { return VK_PRIMITIVE_TOPOLOGY_MAX_ENUM; }
++	if (pipeline->getDynamicStateFlags().has(MVKRenderStateFlag::PrimitiveTopology) && _dynamicPrimitiveTopology != VK_PRIMITIVE_TOPOLOGY_MAX_ENUM) {
++		return _dynamicPrimitiveTopology;
++	}
++	return pipeline->getVkPrimitiveTopology();
++}
++
+ void MVKCommandEncoder::markTimestamp(MVKTimestampQueryPool* pQueryPool, uint32_t query) {
+     uint32_t queryCount = 1;
+     if (isInRenderPass() && getSubpass()->isMultiview()) {

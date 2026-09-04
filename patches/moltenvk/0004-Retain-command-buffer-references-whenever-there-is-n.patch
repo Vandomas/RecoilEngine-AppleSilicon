@@ -1,0 +1,32 @@
+From c06a7e3ac5e70bb29ae577378885f8a5fb3eb2d6 Mon Sep 17 00:00:00 2001
+From: Vandomas <vandcim@gmail.com>
+Date: Thu, 3 Sep 2026 04:23:19 +0300
+Subject: [PATCH 4/4] Retain command buffer references whenever there is no
+ residency set
+
+---
+ MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm b/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
+index dec4b452..3372fb13 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm
+@@ -486,10 +486,13 @@
+ id<MTLCommandBuffer> MVKQueueCommandBufferSubmission::getActiveMTLCommandBuffer() {
+ 	if ( !_activeMTLCommandBuffer ) {
+ 		bool needsRetain = false;
+-		if (!_device->hasResidencySet() && (getEnabledDescriptorIndexingFeatures().descriptorBindingPartiallyBound || getMVKConfig().liveCheckAllResources)) {
+-			// Partially bound descriptors will get bound by us even if they're not used at runtime by the shader.
+-			// The application is free to destroy them even if they're not used at runtime even if we bound them.
+-			// Metal will be very unhappy if we destroy something we bound, even if it isn't used at runtime.
++		if (!_device->hasResidencySet()) {
++			// Without a residency set Metal only knows about a resource for as long as the
++			// command buffer retains it. An app may destroy a resource as soon as it has
++			// observed a timeline value or fence that covers the work using it, and that
++			// can be before the Metal command buffer has finished executing, so let the
++			// command buffer hold every resource it references until completion. Measured
++			// on zink over an M3 Max this costs no frame rate and ends the GPU faults.
+ 			needsRetain = true;
+ 		}
+ 		setActiveMTLCommandBuffer(_queue->getMTLCommandBuffer(_commandUse, needsRetain));

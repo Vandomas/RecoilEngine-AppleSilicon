@@ -1,0 +1,85 @@
+From 2f26742b311bc318a00139758f76ea0c4019f2ae Mon Sep 17 00:00:00 2001
+From: Vandomas <vandcim@gmail.com>
+Date: Wed, 2 Sep 2026 18:47:55 +0300
+Subject: [PATCH 3/4] Size the triangle fan scratch buffer for the draw
+
+The conversion kernel writes the expanded fan at the draw's own indexStart, copied from the source arguments, while the scratch buffer was reserved at the 128Ki ceiling from offset zero. A draw with a large firstIndex wrote past it into neighbouring pool regions. Callers that know their arguments now pass indexStart + (indexCount - 2) * 3 as the size, and a fan of fewer than three vertices no longer underflows the count.
+---
+ MoltenVK/MoltenVK/Commands/MVKCmdDraw.h                  | 7 +++++++
+ MoltenVK/MoltenVK/Commands/MVKCmdDraw.mm                 | 9 ++++++++-
+ .../MVKCommandPipelineStateFactoryShaderSource.h         | 3 ++-
+ 3 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCmdDraw.h b/MoltenVK/MoltenVK/Commands/MVKCmdDraw.h
+index 9afc3ed8..d226cad4 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCmdDraw.h
++++ b/MoltenVK/MoltenVK/Commands/MVKCmdDraw.h
+@@ -208,6 +208,13 @@ public:
+ 	void encode(MVKCommandEncoder* cmdEncoder) override;
+ 	void encode(MVKCommandEncoder* cmdEncoder, const MVKIndexMTLBufferBinding& ibbOrig);
+ 
++	/**
++	 * Number of index entries the triangle-fan scratch buffer must hold, when the caller
++	 * knows the draw arguments: indexStart + (indexCount - 2) * 3. Zero means unknown,
++	 * and the emulation then reserves its 128Ki ceiling.
++	 */
++	uint32_t _maxIndexCountHint = 0;
++
+ protected:
+ 	MVKCommandTypePool<MVKCommand>* getTypePool(MVKCommandPool* cmdPool) override;
+ 
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCmdDraw.mm b/MoltenVK/MoltenVK/Commands/MVKCmdDraw.mm
+index f8e4b2d2..d34bf2c0 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCmdDraw.mm
++++ b/MoltenVK/MoltenVK/Commands/MVKCmdDraw.mm
+@@ -161,6 +161,7 @@
+ 	ibb.size = vtxIdxBuff->_length;
+ 
+ 	MVKCmdDrawIndexedIndirect diiCmd;
++	diiCmd._maxIndexCountHint = (pIndArg->indexCount >= 3) ? pIndArg->indexStart + (pIndArg->indexCount - 2) * 3 : 0;
+ 	diiCmd.setContent(cmdEncoder->_cmdBuffer,
+ 					  indirectIdxBuff->_mtlBuffer,
+ 					  indirectIdxBuff->_offset,
+@@ -390,6 +391,7 @@
+ 	pIndArg->baseInstance = _firstInstance;
+ 
+ 	MVKCmdDrawIndexedIndirect diiCmd;
++	diiCmd._maxIndexCountHint = (pIndArg->indexCount >= 3) ? pIndArg->indexStart + (pIndArg->indexCount - 2) * 3 : 0;
+ 	diiCmd.setContent(cmdEncoder->_cmdBuffer,
+ 					  indirectIdxBuff->_mtlBuffer,
+ 					  indirectIdxBuff->_offset,
+@@ -856,6 +858,7 @@ static void bindIndirectZeroDivisorVertexBuffers(MVKCommandEncoder* cmdEncoder,
+ 	cmdEncoder->beginMetalRenderPass(kMVKCommandUseRestartSubpass);
+ 
+ 	MVKCmdDrawIndexedIndirect diiCmd;
++	// an indirect draw carries its index count on the gpu, so there is no hint to give
+ 	diiCmd.setContent(cmdEncoder->_cmdBuffer,
+ 					  indirectIdxBuff->_mtlBuffer,
+ 					  indirectIdxBuff->_offset,
+@@ -1337,7 +1340,11 @@ static void bindIndirectZeroDivisorVertexBuffers(MVKCommandEncoder* cmdEncoder,
+         mtlIndBuff = tempIndirectBuff->_mtlBuffer;
+         mtlTempIndBuffOfst = tempIndirectBuff->_offset;
+ 		if (vtxAdjmts.isTriangleFan) {
+-			auto* triVtxBuff = cmdEncoder->getTempMTLBuffer(mvkMTLIndexTypeSizeInBytes((MTLIndexType)ibb.mtlIndexType) * kMVKMaxDrawIndirectVertexCount, true);
++			// the kernel writes the expanded fan at the draw's own indexStart, so the scratch
++			// buffer must hold indexStart + (n - 2) * 3 entries. the callers that know their
++			// arguments pass that as the hint; an indirect draw only learns them on the gpu
++			const uint32_t triFanIdxCount = (_maxIndexCountHint > 0) ? _maxIndexCountHint : kMVKMaxDrawIndirectVertexCount;
++			auto* triVtxBuff = cmdEncoder->getTempMTLBuffer(mvkMTLIndexTypeSizeInBytes((MTLIndexType)ibb.mtlIndexType) * triFanIdxCount, true);
+ 			ibb.mtlBuffer = triVtxBuff->_mtlBuffer;
+ 			ibb.offset = triVtxBuff->_offset;
+ 		}
+diff --git a/MoltenVK/MoltenVK/Commands/MVKCommandPipelineStateFactoryShaderSource.h b/MoltenVK/MoltenVK/Commands/MVKCommandPipelineStateFactoryShaderSource.h
+index 9a72cc2a..4525657c 100644
+--- a/MoltenVK/MoltenVK/Commands/MVKCommandPipelineStateFactoryShaderSource.h
++++ b/MoltenVK/MoltenVK/Commands/MVKCommandPipelineStateFactoryShaderSource.h
+@@ -327,7 +327,8 @@ kernel void cmdDrawIndexedIndirectConvertBuffers(const device char* srcBuff [[bu
+ 		dst.instanceCount *= viewCount;
+ 	}
+ 	if (vtxAdj.isTriFan) {
+-		dst.indexCount = (src.indexCount - 2) * 3;
++		// a fan needs three vertices; fewer would underflow the unsigned count below
++		dst.indexCount = src.indexCount >= 3 ? (src.indexCount - 2) * 3 : 0;
+ 		switch (vtxAdj.idxType) {
+ 			case MTLIndexTypeUInt16:
+ 				populateTriIndxsFromTriFan(&((device uint16_t*)triIdxs)[dst.indexStart],
