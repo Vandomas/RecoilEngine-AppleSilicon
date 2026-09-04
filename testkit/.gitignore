@@ -1,1 +1,6 @@
 icd-*/
+gpuhang/gpuhang
+gpuhang/tracersmoke
+gpuhang/*.spv
+gpuhang/*.o
+gpuhang/icd-*.json
