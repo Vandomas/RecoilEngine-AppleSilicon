@@ -1,13 +1,20 @@
-zink: do not require nullDescriptor
+From ecfc013af6cb809328c17297c26ea8e06ac2c4e1 Mon Sep 17 00:00:00 2001
+From: Vandomas <vandcim@gmail.com>
+Date: Sat, 5 Sep 2026 13:20:45 +0300
+Subject: [PATCH 4/7] zink: do not require nullDescriptor
 
 MoltenVK reports robustness2.nullDescriptor as unsupported, and zink
 refuses to create a screen without it. Gate the descriptor buffer mode
 on the feature instead.
-
 ---
+ src/gallium/drivers/zink/zink_screen.c | 13 ++++++++-----
+ 1 file changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/src/gallium/drivers/zink/zink_screen.c b/src/gallium/drivers/zink/zink_screen.c
+index c11c6a2cabe..b598df30787 100644
 --- a/src/gallium/drivers/zink/zink_screen.c
 +++ b/src/gallium/drivers/zink/zink_screen.c
-@@ -3494,10 +3494,6 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
+@@ -3512,11 +3512,6 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
        goto fail;
     }
  
@@ -15,10 +22,11 @@ on the feature instead.
 -      mesa_loge("Zink requires the nullDescriptor feature of KHR/EXT robustness2.");
 -      goto fail;
 -   }
- 
+-
     if (zink_set_driver_strings(screen)) {
        mesa_loge("ZINK: failed to set driver strings\n");
-@@ -3722,6 +3718,14 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
+       goto fail;
+@@ -3738,6 +3733,14 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
  
     bool can_db = true;
     {
@@ -33,3 +41,6 @@ on the feature instead.
        if (!screen->info.have_EXT_descriptor_buffer) {
           if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
              if (!screen->driver_name_is_inferred)
+-- 
+2.50.1 (Apple Git-155)
+

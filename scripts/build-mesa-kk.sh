@@ -23,7 +23,10 @@ set -euo pipefail
 
 BAR="${BAR:-$(cd "$(dirname "$0")/.." && pwd)}"
 DEPS="$BAR/deps"
-MESA_COMMIT="8f272b1fe18e95366386a075f2df0db4e9ea78b9"   # full SHA, pinned (verified to render BAR on KosmicKrisp)
+# full SHA the default patch set (patches/mesa, the KosmicKrisp + WSI stack) applies to. the
+# shipping MoltenVK stack pins its own commit in packaging/ship-config.sh and passes it here,
+# so the pin always travels with the patch set that was rebased onto it
+MESA_COMMIT="${MESA_COMMIT:-8f272b1fe18e95366386a075f2df0db4e9ea78b9}"
 SPIRV_XLAT_TAG="v19.1.7"
 MESA_PREFIX="${MESA_PREFIX:-$DEPS/mesa-native}"           # driver install prefix
 MESA_SRC="${MESA_SRC:-$DEPS/mesa-src}"
@@ -108,7 +111,7 @@ fi
 test -f "$DEPS/spirv-xlat-install/lib/pkgconfig/LLVMSPIRVLib.pc" || { echo "FATAL: spirv-xlat install missing"; exit 1; }
 echo "spirv-xlat OK"
 
-echo "=== [3/4] Mesa 26.2-devel (zink + kosmickrisp) @ $MESA_COMMIT + $NPATCH patches ==="
+echo "=== [3/4] Mesa $(cat VERSION 2>/dev/null || echo 26.2) (zink${VULKAN_DRIVER:+ + $VULKAN_DRIVER}) @ $MESA_COMMIT + $NPATCH patches ==="
 if [ ! -d "$MESA_SRC/.git" ]; then
   git clone https://gitlab.freedesktop.org/mesa/mesa.git "$MESA_SRC"
 fi
@@ -177,13 +180,17 @@ export LIBRARY_PATH="/opt/homebrew/lib"
 NEUTRAL_PREFIX="/opt/bar-driver"
 STAGE="$DEPS/mesa-stage"
 
+# newer mesa dlopens the loader as @rpath/libvulkan.1.dylib with no bare-name fallback; give the
+# raw (non-bundle) driver an rpath to the brew loader. release-build.sh strips it from the bundle
+LOADER_RPATH_OPT=()
+grep -q "vulkan-loader-rpath" meson.options 2>/dev/null && LOADER_RPATH_OPT=(-Dvulkan-loader-rpath=/opt/homebrew/opt/vulkan-loader/lib)
 rm -rf build-native "$STAGE"
 meson setup build-native --native-file "$DEPS/plain-native.ini" \
   --pkg-config-path "$DEPS/spirv-xlat-install/lib/pkgconfig" \
   -Dprefix="$NEUTRAL_PREFIX" -Dplatforms=macos \
   -Degl-native-platform=surfaceless -Degl=enabled -Dglx=disabled \
   -Dgallium-drivers=zink -Dvulkan-drivers="$VULKAN_DRIVER" \
-  -Dmoltenvk-dir=/opt/homebrew/opt/molten-vk \
+  -Dmoltenvk-dir=/opt/homebrew/opt/molten-vk "${LOADER_RPATH_OPT[@]}" \
   -Dllvm=enabled -Dshared-llvm=disabled -Dbuildtype=release
 DESTDIR="$STAGE" ninja -C build-native install
 

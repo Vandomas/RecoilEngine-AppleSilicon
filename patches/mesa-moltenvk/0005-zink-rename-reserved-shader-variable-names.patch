@@ -1,14 +1,20 @@
-zink: rename reserved shader variable names
+From f4098244a4f4ade9720e52c9ef6d83e233317abb Mon Sep 17 00:00:00 2001
+From: Vandomas <vandcim@gmail.com>
+Date: Sat, 5 Sep 2026 13:21:16 +0300
+Subject: [PATCH 5/7] zink: rename reserved shader variable names
 
 Names reach the driver shader compiler, and MSL treats some of them as
 types: a shader that declares a variable called "sampler" fails to
 build.
-
 ---
+ .../drivers/zink/nir_to_spirv/spirv_builder.c | 30 +++++++++++++++++++
+ 1 file changed, 30 insertions(+)
 
+diff --git a/src/gallium/drivers/zink/nir_to_spirv/spirv_builder.c b/src/gallium/drivers/zink/nir_to_spirv/spirv_builder.c
+index a82a8251182..43a3ba39379 100644
 --- a/src/gallium/drivers/zink/nir_to_spirv/spirv_builder.c
 +++ b/src/gallium/drivers/zink/nir_to_spirv/spirv_builder.c
-@@ -197,10 +197,40 @@
+@@ -197,10 +197,40 @@ spirv_builder_emit_exec_mode(struct spirv_builder *b, SpvId entry_point,
     spirv_buffer_emit_word(&b->exec_modes, exec_mode);
  }
  
@@ -49,3 +55,6 @@ build.
     size_t pos = b->debug_names.num_words;
     spirv_buffer_prepare(&b->debug_names, b->mem_ctx, 2);
     spirv_buffer_emit_word(&b->debug_names, SpvOpName);
+-- 
+2.50.1 (Apple Git-155)
+

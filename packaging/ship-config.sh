@@ -2,6 +2,8 @@
 SHIP_ENGINE_BUILD="${BAR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/build-engine"
 # Outside /Users: the prefix is baked into every dylib install name.
 SHIP_MESA_PREFIX="/private/tmp/bar-driver"
+# tag mesa-26.2.2; patches/mesa-moltenvk is rebased onto exactly this commit
+SHIP_MESA_COMMIT="3281a69a8bfd9f997e91c15ed0e6290cae12dd32"
 # The shipped driver is zink alone over MoltenVK, built for macOS 13 with the
 # mesa-moltenvk patch set. build-mesa-kk.sh defaults to a KosmicKrisp build, so a
 # release run that does not pin these would rebuild the prefix as the wrong flavour.

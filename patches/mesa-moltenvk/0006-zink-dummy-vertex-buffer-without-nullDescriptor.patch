@@ -1,8 +1,23 @@
+From c73a0ce6a4c1f90ed614ed89f9163ad5a470c51b Mon Sep 17 00:00:00 2001
+From: Vandomas <vandcim@gmail.com>
+Date: Sat, 5 Sep 2026 13:21:54 +0300
+Subject: [PATCH 6/7] zink: dummy vertex buffer without nullDescriptor
+
+An enabled vertex binding whose pipe_vertex_buffer has no resource is bound
+as VK_NULL_HANDLE, which is only legal with robustness2 nullDescriptor.
+MoltenVK does not expose it and faults on the null binding, so allocate a
+4-byte dummy vertex buffer when the feature is missing and bind that
+instead; robustBufferAccess returns zeros for the reads.
+---
+ src/gallium/drivers/zink/zink_context.c | 16 ++++++++++++++++
+ src/gallium/drivers/zink/zink_types.h   |  1 +
+ 2 files changed, 17 insertions(+)
+
 diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
-index b42e1af6876..7900a8de992 100644
+index 201c7adafc4..7671d077dbe 100644
 --- a/src/gallium/drivers/zink/zink_context.c
 +++ b/src/gallium/drivers/zink/zink_context.c
-@@ -167,6 +167,7 @@ zink_context_destroy(struct pipe_context *pctx)
+@@ -156,6 +156,7 @@ zink_context_destroy(struct pipe_context *pctx)
     if (ctx->blitter)
        util_blitter_destroy(ctx->blitter);
  
@@ -10,7 +25,19 @@ index b42e1af6876..7900a8de992 100644
     pipe_resource_reference(&ctx->dummy_xfb_buffer, NULL);
  
     zink_descriptors_deinit_bindless(ctx);
-@@ -5883,6 +5884,14 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
+@@ -1584,6 +1585,11 @@ zink_bind_vertex_buffers_internal(struct zink_context *ctx, const struct pipe_ve
+          assert(res->obj->buffer);
+          buffers[i] = res->obj->buffer;
+          buffer_offsets[i] = vb->buffer_offset;
++      } else if (unlikely(ctx->dummy_vertex_buffer)) {
++         /* VK_NULL_HANDLE vertex bindings require robustness2 nullDescriptor;
++          * reads of the 4-byte dummy come back as zeros via robustBufferAccess */
++         buffers[i] = zink_resource(ctx->dummy_vertex_buffer)->obj->buffer;
++         buffer_offsets[i] = 0;
+       } else {
+          buffers[i] = VK_NULL_HANDLE;
+          buffer_offsets[i] = 0;
+@@ -6044,6 +6050,14 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
           PIPE_BIND_STREAM_OUTPUT, PIPE_USAGE_IMMUTABLE, sizeof(data));
        if (!ctx->dummy_xfb_buffer)
           goto fail;
@@ -25,7 +52,7 @@ index b42e1af6876..7900a8de992 100644
     }
     if (!is_copy_only) {
        if (!zink_descriptors_init(ctx))
-@@ -5942,6 +5951,8 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
+@@ -6103,6 +6117,8 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
        ctx->invalidate_descriptor_state = zink_context_invalidate_descriptor_state;
     if (!is_copy_only && !is_compute_only) {
        pipe_buffer_write_nooverlap(&ctx->base, ctx->dummy_xfb_buffer, 0, sizeof(data), data);
@@ -34,27 +61,11 @@ index b42e1af6876..7900a8de992 100644
        if (screen->info.have_EXT_color_write_enable)
           reapply_color_write(ctx);
  
-diff --git a/src/gallium/drivers/zink/zink_draw.cpp b/src/gallium/drivers/zink/zink_draw.cpp
-index 685de67f9ff..e22a5f023ea 100644
---- a/src/gallium/drivers/zink/zink_draw.cpp
-+++ b/src/gallium/drivers/zink/zink_draw.cpp
-@@ -129,6 +129,11 @@ zink_bind_vertex_buffers(struct zink_context *ctx)
-          assert(res->obj->buffer);
-          buffers[i] = res->obj->buffer;
-          buffer_offsets[i] = vb->buffer_offset;
-+      } else if (unlikely(ctx->dummy_vertex_buffer)) {
-+         /* VK_NULL_HANDLE vertex bindings require robustness2 nullDescriptor;
-+          * reads of the 4-byte dummy come back as zeros via robustBufferAccess */
-+         buffers[i] = zink_resource(ctx->dummy_vertex_buffer)->obj->buffer;
-+         buffer_offsets[i] = 0;
-       } else {
-          buffers[i] = VK_NULL_HANDLE;
-          buffer_offsets[i] = 0;
 diff --git a/src/gallium/drivers/zink/zink_types.h b/src/gallium/drivers/zink/zink_types.h
-index 9e6d43d3ea3..84b16fc7407 100644
+index 34bcaf61d29..0e215dd1201 100644
 --- a/src/gallium/drivers/zink/zink_types.h
 +++ b/src/gallium/drivers/zink/zink_types.h
-@@ -1900,6 +1900,7 @@ struct zink_context {
+@@ -1898,6 +1898,7 @@ struct zink_context {
        uint64_t render_passes;
     } hud;
  
@@ -62,3 +73,6 @@ index 9e6d43d3ea3..84b16fc7407 100644
     struct pipe_resource *dummy_xfb_buffer;
  
     unsigned buffer_rebind_counter;
+-- 
+2.50.1 (Apple Git-155)
+

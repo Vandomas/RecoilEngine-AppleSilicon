@@ -1,7 +1,7 @@
-From 3397ce537ff3fb00b996d8e20d51e6da64f8b826 Mon Sep 17 00:00:00 2001
+From a9e1a036275d66719220b2352a8f9bf1f727dbec Mon Sep 17 00:00:00 2001
 From: Frank Binns <frank.binns@imgtec.com>
 Date: Wed, 22 Jul 2026 06:45:45 +0100
-Subject: [PATCH] zink: fix graphics pipeline hash collision
+Subject: [PATCH 7/7] zink: fix graphics pipeline hash collision
 
 The blend (in the case of no full DS3 support) and vertex elements state object
 hashes are taken into account when computing the final hash used to cache &
