@@ -1,0 +1,80 @@
+From: Vandomas <vandcim@gmail.com>
+Subject: [PATCH] zink: keep staging uploads for buffer maps
+
+Reverts upstream 67139ce1482 ("zink: revert cached mem handling for
+staging uploads") for the port.
+
+With that change zink writes a DISCARD_RANGE map straight into the buffer
+whenever its usage tracking says the buffer is idle, instead of always
+going through a staging buffer on memory types that are not host cached.
+On MoltenVK that corrupts terrain: after a burst of glBufferData
+re-uploads of ROAM patch VBOs (a lag catch-up in a multiplayer game)
+patches draw with garbage vertices, giant spikes and walls, and stay
+corrupted. Deterministic replay reproduction, clean with this revert and
+on the pre-July driver; the exact interplay with the batch usage
+tracking changes of the same period is still open.
+
+diff --git a/src/gallium/drivers/zink/zink_resource.c b/src/gallium/drivers/zink/zink_resource.c
+index c37fa55f3a1..ebf34529e8c 100644
+--- a/src/gallium/drivers/zink/zink_resource.c
++++ b/src/gallium/drivers/zink/zink_resource.c
+@@ -2674,13 +2674,19 @@ zink_buffer_map(struct pipe_context *pctx,
+    }
+ 
+    unsigned map_offset = box->x;
+-   if (usage & PIPE_MAP_DISCARD_RANGE &&
+-        (!res->obj->host_visible ||
+-        !(usage & (PIPE_MAP_UNSYNCHRONIZED | PIPE_MAP_PERSISTENT)))) {
++   /* ideally never ever read or write to non-cached mem */
++   bool is_cached_mem = (screen->info.mem_props.memoryTypes[res->obj->bo->base.placement].propertyFlags & VK_STAGING_RAM) == VK_STAGING_RAM;
++   /* but this is only viable with a certain amount of vram since it may fully duplicate lots of large buffers */
++   bool host_mem_type_check = res->obj->host_visible;
++   if (screen->always_cached_upload)
++      host_mem_type_check &= is_cached_mem;
++   if (usage & PIPE_MAP_DISCARD_RANGE && !(usage & PIPE_MAP_PERSISTENT) &&
++       (!host_mem_type_check || !(usage & (PIPE_MAP_UNSYNCHRONIZED)))) {
++
+       /* Check if mapping this buffer would cause waiting for the GPU.
+        */
+ 
+-      if (!res->obj->host_visible || force_discard_range ||
++      if (!host_mem_type_check || force_discard_range ||
+           !zink_resource_usage_check_completion(screen, res, ZINK_RESOURCE_ACCESS_RW)) {
+          /* Do a wait-free write-only transfer using a temporary buffer. */
+          unsigned offset;
+@@ -2721,9 +2727,7 @@ zink_buffer_map(struct pipe_context *pctx,
+       if (!zink_resource_usage_check_completion(screen, res, ZINK_RESOURCE_ACCESS_WRITE))
+          goto success;
+       usage |= PIPE_MAP_UNSYNCHRONIZED;
+-   } else if (((usage & PIPE_MAP_READ) && !(usage & PIPE_MAP_PERSISTENT) &&
+-               ((screen->info.mem_props.memoryTypes[res->obj->bo->base.placement].propertyFlags & VK_STAGING_RAM) != VK_STAGING_RAM)) ||
+-              !res->obj->host_visible) {
++   } else if ((usage & PIPE_MAP_READ) && !(usage & PIPE_MAP_PERSISTENT) && !host_mem_type_check) {
+       /* any read, non-HV write, or unmappable that reaches this point needs staging */
+       if ((usage & PIPE_MAP_READ) || !res->obj->host_visible || res->base.b.flags & PIPE_RESOURCE_FLAG_DONT_MAP_DIRECTLY) {
+ overwrite:
+diff --git a/src/gallium/drivers/zink/zink_screen.c b/src/gallium/drivers/zink/zink_screen.c
+index 177d8f9af47..a4932993a48 100644
+--- a/src/gallium/drivers/zink/zink_screen.c
++++ b/src/gallium/drivers/zink/zink_screen.c
+@@ -3558,6 +3558,8 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
+       /* determine if vis vram is roughly equal to total vram */
+       if (biggest_vis_vram > biggest_vram * 0.9)
+          screen->resizable_bar = true;
++      if (biggest_vis_vram >= 8ULL * 1024ULL * 1024ULL * 1024ULL)
++         screen->always_cached_upload = true;
+    }
+ 
+    setup_renderdoc(screen);
+diff --git a/src/gallium/drivers/zink/zink_types.h b/src/gallium/drivers/zink/zink_types.h
+index 34bcaf61d29..213d03a1252 100644
+--- a/src/gallium/drivers/zink/zink_types.h
++++ b/src/gallium/drivers/zink/zink_types.h
+@@ -1447,6 +1447,7 @@ struct zink_screen {
+    uint8_t heap_map[ZINK_HEAP_MAX][VK_MAX_MEMORY_TYPES];  // mapping from zink heaps to memory type indices
+    uint8_t heap_count[ZINK_HEAP_MAX];  // number of memory types per zink heap
+    bool resizable_bar;
++   bool always_cached_upload;
+ 
+    uint64_t total_video_mem;
+    uint64_t clamp_video_mem;
