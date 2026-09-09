@@ -216,10 +216,6 @@ CBuilderCAI::CBuilderCAI(CUnit* owner):
 CBuilderCAI::~CBuilderCAI()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
-	// creg
-	if (owner == nullptr)
-		return;
-
 	CBuilderCaches::RemoveUnitFromReclaimers(owner);
 	CBuilderCaches::RemoveUnitFromFeatureReclaimers(owner);
 	CBuilderCaches::RemoveUnitFromResurrecters(owner);

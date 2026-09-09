@@ -537,9 +537,7 @@ CWaitCommandsAI::TimeWait::TimeWait(int _duration, CUnit* _unit)
 	duration = _duration;
 	factory = false;
 
-	// creg
-	if (unit != nullptr)
-		AddDeathDependence(unit, DEPENDENCE_WAITCMD);
+	AddDeathDependence(unit, DEPENDENCE_WAITCMD);
 }
 
 

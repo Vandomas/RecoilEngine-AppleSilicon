@@ -187,8 +187,7 @@ void* Class::CreateInstance(size_t size)
 {
 	void* inst;
 	if (poolAlloc != nullptr) {
-		if ((inst = poolAlloc(size)) == nullptr)
-			throw std::bad_alloc();
+		inst = poolAlloc(size);
 	} else {
 		inst = ::operator new(size, std::align_val_t{(size_t)alignment});
 		isAlignableAddress = true;
@@ -208,12 +207,6 @@ void* Class::CreateInstance(size_t size, void* addr)
 		constructor(inst);
 
 	return inst;
-}
-
-void Class::DestructInstance(void* inst)
-{
-	if (destructor != nullptr)
-		destructor(inst);
 }
 
 void Class::DeleteInstance(void* inst)

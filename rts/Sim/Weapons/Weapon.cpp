@@ -208,10 +208,9 @@ CWeapon::~CWeapon()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
 	assert(weaponMemPool.mapped(this));
-	if (damages != nullptr)
-		DynDamageArray::DecRef(damages);
+	DynDamageArray::DecRef(damages);
 
-	if (weaponDef != nullptr && weaponDef->interceptor)
+	if (weaponDef->interceptor)
 		interceptHandler.RemoveInterceptorWeapon(this);
 }
 

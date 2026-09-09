@@ -76,7 +76,7 @@ public:
 	const DynDamageArray* damages;
 
 protected:
-	CWeaponProjectile(): damages(nullptr) { }
+	CWeaponProjectile() { }
 	void UpdateInterception();
 	virtual void UpdateGroundBounce();
 
