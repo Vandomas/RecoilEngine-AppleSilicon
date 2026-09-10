@@ -413,17 +413,72 @@ I hope online play can be enabled very soon." || true
   # though the old files are all still present (pool/packages are append-only,
   # nothing is ever overwritten). Snapshot the metadata before the check and
   # restore it on ANY non-success — the old version then prevails exactly.
-  RAPID_DIR="$WRITEDIR/rapid"; RAPID_BAK="$WRITEDIR/rapid.pre-update"
+  RAPID_DIR="$WRITEDIR/rapid"; RAPID_BAK="$WRITEDIR/rapid.pre-update.ready"
+  RAPID_TMP="$WRITEDIR/rapid.pre-update.tmp"; RAPID_LEGACY="$WRITEDIR/rapid.pre-update"
+  RAPID_ERROR=""
+  rapid_failure() {
+    local msg="BAR could not $1 its content metadata. The game was not started."$'\n\n'"$RAPID_ERROR"
+    printf '@E:filesystem %s\n' "$msg" >> "$LOG"
+    [ -n "$HPID" ] && { exec 4>&-; }
+    cleanup_fifo
+    if [ -x "$HERE/error-dialog" ]; then
+      "$HERE/error-dialog" --title "BAR Launcher" --message "[filesystem] $msg" --logfile "$LOG"
+    else
+      fail_dialog "$msg"$'\n\n'"Details: $LOG"
+    fi
+    exit 1
+  }
   restore_rapid() {
-    if [ -d "$RAPID_BAK" ]; then
-      rm -rf "$RAPID_DIR"; mv "$RAPID_BAK" "$RAPID_DIR" 2>/dev/null
+    # Old launchers copied directly into this name, so even a full-looking
+    # legacy backup may be incomplete. Do not choose between it and rapid.
+    if [ -e "$RAPID_LEGACY" ] || [ -L "$RAPID_LEGACY" ]; then
+      RAPID_ERROR="An older backup exists at $RAPID_LEGACY. Its completeness is unknown; the backup and current metadata have been left unchanged."
+      return 1
+    fi
+    if [ -e "$RAPID_BAK" ] || [ -L "$RAPID_BAK" ]; then
+      if [ ! -d "$RAPID_BAK" ] || [ -L "$RAPID_BAK" ]; then
+        RAPID_ERROR="The ready backup is not a directory or is a symbolic link: $RAPID_BAK"
+        return 1
+      fi
+      RAPID_ERROR=$(rm -rf "$RAPID_DIR" 2>&1) || return 1
+      # mv into an existing directory would nest the backup, not restore it.
+      if [ -e "$RAPID_DIR" ] || [ -L "$RAPID_DIR" ]; then
+        RAPID_ERROR="The restore destination still exists: $RAPID_DIR"
+        return 1
+      fi
+      RAPID_ERROR=$(mv "$RAPID_BAK" "$RAPID_DIR" 2>&1) || return 1
       printf 'rapid metadata restored — pre-update version prevails\n' >> "$LOG"
     fi
+    return 0
   }
-  # a leftover backup means the previous update was interrupted mid-write
-  # (crash/force-quit): roll back FIRST so this run starts from a good state
-  restore_rapid
-  [ -d "$RAPID_DIR" ] && { rm -rf "$RAPID_BAK"; cp -R "$RAPID_DIR" "$RAPID_BAK" 2>/dev/null; }
+  snapshot_rapid() {
+    # tmp is either an interrupted copy or an already retired backup. It is
+    # never a recovery source. Only a completed copy is published as ready.
+    RAPID_ERROR=$(rm -rf "$RAPID_TMP" 2>&1) || return 1
+    if [ -L "$RAPID_DIR" ] || { [ -e "$RAPID_DIR" ] && [ ! -d "$RAPID_DIR" ]; }; then
+      RAPID_ERROR="The metadata path is not a directory or is a symbolic link: $RAPID_DIR"
+      return 1
+    fi
+    if [ -d "$RAPID_DIR" ]; then
+      RAPID_ERROR=$(cp -R "$RAPID_DIR" "$RAPID_TMP" 2>&1) || return 1
+    else
+      # A first run also needs a defined rollback state, with no partial tags.
+      RAPID_ERROR=$(mkdir "$RAPID_TMP" 2>&1) || return 1
+    fi
+    RAPID_ERROR=$(mv "$RAPID_TMP" "$RAPID_BAK" 2>&1) || return 1
+  }
+  commit_rapid() {
+    # Retire atomically before cleanup: a failed rm must not make a successful
+    # update roll back on the next launch. All paths are on the same profile.
+    RAPID_ERROR=$(mv "$RAPID_BAK" "$RAPID_TMP" 2>&1) || return 1
+    if ! RAPID_ERROR=$(rm -rf "$RAPID_TMP" 2>&1); then
+      printf 'rapid update accepted; obsolete backup cleanup failed: %s\n' "$RAPID_ERROR" >> "$LOG"
+    fi
+    return 0
+  }
+  # Recover an interrupted update before creating this run's complete backup.
+  restore_rapid || rapid_failure "restore"
+  snapshot_rapid || rapid_failure "back up"
 
   # Run the downloader in the BACKGROUND and poll it, so a Skip click can
   # interrupt it mid-download (`wait <pid>` still recovers its real exit
@@ -485,7 +540,7 @@ I hope online play can be enabled very soon." || true
   if [ "$SKIPPED" = "1" ]; then
     # User chose to play NOW (train/plane, half-working wifi): stop cleanly,
     # roll the tag metadata back — the pre-update version prevails intact.
-    restore_rapid
+    restore_rapid || rapid_failure "restore"
     if [ -n "$HPID" ]; then
       printf 'F %s\n' "Update skipped" >&4 2>/dev/null
       printf 'D %s\n' "Launching game…" >&4 2>/dev/null
@@ -494,8 +549,8 @@ I hope online play can be enabled very soon." || true
     cleanup_fifo
     printf 'update skipped by user — playing existing content; next launch retries\n' >> "$LOG"
   elif [ "$RC" -eq 0 ] && [ -z "$ERR_CODE" ]; then
+    commit_rapid || rapid_failure "finish updating"
     printf '%s\n' "$CONTENT_SIG" > "$DONE_SENTINEL"   # WHAT is installed, not just THAT
-    rm -rf "$RAPID_BAK"   # update is fully on disk — snapshot no longer needed
     if [ -n "$HPID" ]; then
       # Finished state: bar and Skip button disappear, result + launch note.
       if [ "$FIRST_RUN" = "1" ]; then
@@ -519,7 +574,7 @@ I hope online play can be enabled very soon." || true
     # First run: nothing playable exists — close the progress window, then show
     # the rich error dialog (same one the engine uses): classified message + a
     # scrollable this-session log to paste.
-    restore_rapid   # roll partial first-run metadata back to a clean slate
+    restore_rapid || rapid_failure "restore"   # first-run metadata back to a clean slate
     [ -n "$HPID" ] && { exec 4>&-; kill "$HPID" 2>/dev/null; }
     cleanup_fifo
     MSG="${ERR_TEXT:-The first-run download failed (code ${RC}).}"
@@ -534,7 +589,7 @@ I hope online play can be enabled very soon." || true
     # Update check failed on an already-working install (offline, CDN hiccup,
     # half-working train wifi): roll the tag metadata back so the OLD version
     # loads intact, play on existing content; the next launch retries.
-    restore_rapid
+    restore_rapid || rapid_failure "restore"
     [ -n "$HPID" ] && { exec 4>&-; kill "$HPID" 2>/dev/null; }
     cleanup_fifo
     printf 'update check failed (code %s %s) — continuing on existing content\n' \
