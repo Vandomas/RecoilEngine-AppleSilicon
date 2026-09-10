@@ -224,7 +224,11 @@ fi
 # Mechanism: that whole block is gated on `firstlaunchsetupDone`, which BAR
 # persists as `firsttimesetupDone` in its LuaUI config. Seeding that marker makes
 # BAR skip the downgrade. Because skipping it also skips the GOOD first-launch
-# defaults, we reproduce those here (they are plain config values).
+# defaults, we reproduce those here. The skipped viewspring action needs a
+# Camera Remember seed: LuaIntro migrations can overwrite CamMode before
+# cameras load. Seed only a missing camera preference, leaving angles and
+# position to BAR. Existing generated config bytes stay unchanged when a
+# camera preference is already present.
 # Deliberately seeded ONLY when the config is absent, i.e. a genuinely fresh
 # install -- a returning user's file is never touched, and everything below stays
 # changeable from BAR's own settings UI.
@@ -240,6 +244,11 @@ if [ ! -f "$BYAR_CFG" ]; then
 return {
 	allowUserWidgets = true,
 	data = {
+BYAREOF
+  if ! grep -Eq '^[[:space:]]*CamMode(Name)?[[:space:]]*=' "$CFG" 2>/dev/null; then
+    printf '\t\t["Camera Remember"] = { mode = 2 },\n' >> "$BYAR_CFG"
+  fi
+  cat >> "$BYAR_CFG" <<'BYAREOF'
 		Options = {
 			firsttimesetupDone = true,
 			desiredWaterValue = 4,
