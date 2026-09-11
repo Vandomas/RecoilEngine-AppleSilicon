@@ -29,6 +29,21 @@ CRotOverheadController::CRotOverheadController(): oldHeight(500.0f), rot(2.677f,
 	enabled     = configHandler->GetBool("RotOverheadEnabled");
 	fov         = configHandler->GetFloat("RotOverheadFOV");
 	clampToMap = configHandler->GetBool("RotOverheadClampMap");
+	configHandler->NotifyOnChange(this, {"RotOverheadScrollSpeed"});
+}
+
+
+CRotOverheadController::~CRotOverheadController()
+{
+	RECOIL_DETAILED_TRACY_ZONE;
+	configHandler->RemoveObserver(this);
+}
+
+
+void CRotOverheadController::ConfigNotify(const std::string& key, const std::string& value)
+{
+	RECOIL_DETAILED_TRACY_ZONE;
+	scrollSpeed = configHandler->GetInt("RotOverheadScrollSpeed") * 0.1f;
 }
 
 

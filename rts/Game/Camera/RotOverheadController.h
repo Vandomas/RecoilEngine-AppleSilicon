@@ -1,7 +1,6 @@
 /* This file is part of the Spring engine (GPL v2 or later), see LICENSE.html */
 
-#ifndef _ROTOH_CONTROLLER_H
-#define _ROTOH_CONTROLLER_H
+#pragma once
 
 #include "CameraController.h"
 #include "Game/Camera.h"
@@ -10,6 +9,7 @@ class CRotOverheadController : public CCameraController
 {
 public:
 	CRotOverheadController();
+	~CRotOverheadController() override;
 
 	const std::string GetName() const { return "rot"; }
 
@@ -31,6 +31,7 @@ public:
 	float3 GetDir() const {	return CCamera::GetFwdFromRot(rot); }
 
 	void Update();
+	void ConfigNotify(const std::string& key, const std::string& value);
 
 private:
 	float3 rot;
@@ -38,5 +39,3 @@ private:
 	float oldHeight;
 	bool clampToMap;
 };
-
-#endif // _ROTOH_CONTROLLER_H
