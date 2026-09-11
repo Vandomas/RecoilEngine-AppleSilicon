@@ -207,6 +207,21 @@ if [ -f "$RES/default_springsettings.cfg" ]; then
     grep -q "^$key " "$CFG" 2>/dev/null || echo "$kv" >> "$CFG"
   done < "$RES/default_springsettings.cfg"
 fi
+# Chobby caches its current lobby version list using the first rapid domain.
+# Seed only a missing key, after bundled defaults; preserve explicit settings.
+if grep '^[[:space:]]*RapidTagResolutionOrder[[:space:]]*=' "$CFG" >/dev/null; then
+  :
+else
+  rapid_order_status=$?
+  if [ "$rapid_order_status" -ne 1 ]; then
+    fail_dialog "Beyond All Reason could not read springsettings.cfg. Check access to the game data folder and try again."
+    exit 1
+  fi
+  if ! printf '\n%s\n' 'RapidTagResolutionOrder = repos-cdn.beyondallreason.dev;repos.beyondallreason.dev' >> "$CFG"; then
+    fail_dialog "Beyond All Reason could not save springsettings.cfg. Check access to the game data folder and try again."
+    exit 1
+  fi
+fi
 # "potato GPU" mitigation (2026-08-04). BAR's own gui_options.lua classifies the
 # GPU by VENDOR, and its chain is: no-GL4 -> potato; NVidia -> check VRAM;
 # Intel -> needs "arc"; AMD -> needs "rx"/"r9"; else -> potato. Apple Silicon via
