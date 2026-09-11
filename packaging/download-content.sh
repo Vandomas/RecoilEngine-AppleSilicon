@@ -25,10 +25,12 @@
 #   2  usage        bad arguments
 #   3  disk         not enough free space (preflight, or pr-downloader ran out)
 #   4  launch       pr-downloader binary missing / would not start
-#   5  network      could not reach the CDN (DNS/connat/TLS) — never got repos
+#   5  network      downloader reported a DNS/connection/TLS failure
 #   6  tag          server reached, but a requested package tag was not found
 #   7  content      tag resolved, but the archive/pool download failed/interrupted
 #   8  install      downloader killed by a signal (Gatekeeper/quarantine)
+#   9  filesystem   explicit local file-access/update failure
+#  10  unknown      downloader failed without a recognized cause
 # Usage: download-content.sh [--writedir DIR] [--full] [--map "Map Name"]...
 set -uo pipefail   # NB not -e: we handle pr-downloader failures explicitly
 
@@ -122,7 +124,7 @@ fi
 # HTTP fetches); a combined run does it once instead of once per item, which
 # roughly halves the "contacting content servers" wait on every launch.
 download_all() {
-  local attempt rc raw reached_server missing last_pkg
+  local attempt rc raw reached_server missing last_pkg file_errors file_error curl_errors network_failure
   raw=$(mktemp)
   for attempt in 1 2 3; do
     if [ "$attempt" -eq 1 ]; then say "Contacting content servers…"
@@ -216,9 +218,38 @@ download_all() {
       rm -f "$raw"; return 8
     fi
 
+    # Only actual curl errors count, not LibreSSL / PRD_SSL_CERT_* INFO lines.
+    # CURL write/callback errors can also mean invalid content, so they do not
+    # prove a network or disk cause by themselves.
+    curl_errors=$(sed -nE 's/^\[Error\] .*:(CURL error\([0-9]+:[0-9]+\): |Curl error: |Error in curl )(.*)$/\2/p' "$raw")
+    network_failure=0
+    printf '%s\n' "$curl_errors" | grep -qiE "^(Couldn't resolve (host|proxy)|Could not resolve (host|proxy)|Couldn't connect to server|Failed to connect|Timeout was reached|Operation timed out|SSL connect error|SSL peer certificate|SSL certificate problem|Peer certificate cannot be authenticated)" && network_failure=1
+
+    # File errors can be optional (ETag/cache writes) or cleanup after a
+    # network failure. Only the failed installation of the required repos.gz
+    # has a known fatal path here: Close returns false before the list parses.
+    # Deleting repos.gz.tmp is cleanup, not this installation path.
+    file_errors=$(grep -E '^\[Error\] .*src/FileSystem/(FileSystem|File)\.cpp:' "$raw")
+    file_error=$(printf '%s\n' "$file_errors" | grep -m1 -E '(removeFile\(\):Couldn.t delete file .*|Rename\(\):Failed to rename .* to .*)/rapid/[^/]+/repos\.gz:')
+    if [ "$rc" -eq 5 ]; then
+      # A failed free-space query returns zero and then exit 5 upstream.
+      # Preserve that failure instead of inventing a full-disk diagnosis.
+      file_error=$(printf '%s\n' "$file_errors" | grep -m1 ':getMBsFree():')
+    fi
+    if [ -n "$file_error" ] && [ "$network_failure" -eq 0 ]; then
+      file_error="${file_error#*():}"
+      case "$file_error" in
+        *"No space left on device"*)
+          emit_err disk "The download stopped because the disk ran out of space. $file_error"
+          rm -f "$raw"; return 3 ;;
+      esac
+      emit_err filesystem "Could not access or update local game files. $file_error"
+      rm -f "$raw"; return 9
+    fi
+
     # pr-downloader's own mid-download disk-space abort (exit code 5) —
     # deterministic, and NOT a network problem: say so precisely.
-    if [ "$rc" -eq 5 ]; then
+    if [ "$rc" -eq 5 ] && [ "$network_failure" -eq 0 ]; then
       emit_err disk "The download stopped because the disk ran out of space. Free up about 4 GB, then start the game again — it will resume where it left off."
       rm -f "$raw"; return 3
     fi
@@ -237,16 +268,24 @@ download_all() {
       sleep $((attempt * 5)); continue
     fi
 
-    if [ "$reached_server" -eq 0 ]; then
-      if grep -qiE "resolve host|could not resolve|couldn't resolve|name or service|timed out|timeout|connection refused|could not connect|ssl|certificate" "$raw"; then
-        emit_err network "Could not reach the content servers. Check your internet connection, then start the game again."
-      else
-        emit_err network "Could not download the server file list (no connection to the content network)."
-      fi
+    if [ "$network_failure" -eq 1 ] && [ -n "$file_errors" ]; then
+      # Both were reported; their order does not identify the primary cause.
+      emit_err unknown "The content update failed. The session log contains both file and connection error details."
+      rm -f "$raw"; return 10
+    elif [ "$network_failure" -eq 1 ]; then
+      emit_err network "Could not reach the content servers. Check your internet connection, then start the game again."
       rm -f "$raw"; return 5
+    elif [ "$reached_server" -eq 0 ]; then
+      file_error=$(printf '%s\n' "$file_errors" | head -1)
+      if [ -n "$file_error" ]; then
+        emit_err unknown "The content update failed. The downloader reported: ${file_error#*():} See the session log for details."
+      else
+        emit_err unknown "The content update failed. The session log contains the downloader's error details."
+      fi
+      rm -f "$raw"; return 10
     else
       last_pkg=$(sed -n 's/.*\[Download\] //p' "$raw" | tail -1)
-      emit_err content "The download of '${last_pkg:-the game files}' did not finish (the connection dropped or a file failed verification). Please start the game again to resume."
+      emit_err content "The download of '${last_pkg:-the game files}' did not finish. The session log contains the downloader's error details. Please start the game again to resume."
       rm -f "$raw"; return 7
     fi
   done
